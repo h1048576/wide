@@ -29,7 +29,7 @@ export interface WideApi {
   setTheme(theme: Theme): Promise<void>
   setAppearance(settings: AppearanceSettings): Promise<AppearanceSettings>
   setMenuOrder(order: FeatureId[]): Promise<FeatureId[]>
-  detect(id: FeatureId, path: string, mode: ApplicationSettings['launchMode']): Promise<DroidInstallation | null>
+  detect(id: FeatureId, path: string, mode: ApplicationSettings['launchMode'], force?: boolean): Promise<DroidInstallation | null>
   chooseExecutable(id: FeatureId): Promise<string | null>
   run(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings): Promise<JobResult>
   onNotice(callback: (result: JobResult) => void): () => void

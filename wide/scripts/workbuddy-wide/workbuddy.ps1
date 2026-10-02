@@ -268,7 +268,7 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
                 [void]$socket.CloseAsync(
                     [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
-                    [Threading.CancellationToken]::None
+                    $timeout.Token
                 ).GetAwaiter().GetResult()
             }
         } catch {}

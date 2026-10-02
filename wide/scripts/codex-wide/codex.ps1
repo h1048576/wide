@@ -222,7 +222,7 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
                 $ws.CloseAsync(
                     [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
-                    [Threading.CancellationToken]::None
+                    $cts.Token
                 ).GetAwaiter().GetResult()
             }
         } catch {}

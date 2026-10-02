@@ -1,5 +1,6 @@
 ﻿param(
     [switch]$DetectOnly,
+    [switch]$LaunchOnly,
     [string]$ExecutablePath,
     [ValidatePattern('^(?:auto|fit-content|(?:0|[1-9][0-9]{0,3})(?:\.[0-9]+)?(?:px|rem|em|vw|vh|%))$')]
     [string]$Width = '100%',
@@ -28,7 +29,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-if (-not ('QoderWide.NativeMethods' -as [type])) {
+if (-not $DetectOnly -and -not ('QoderWide.NativeMethods' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -366,7 +367,7 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
                 [void]$ws.CloseAsync(
                     [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
-                    [Threading.CancellationToken]::None
+                    $cts.Token
                 ).GetAwaiter().GetResult()
             }
         } catch {}
@@ -494,6 +495,8 @@ try {
     Stop-Qoder $qoder
     Write-Step "正在启动 $($qoder.ApplicationName)（CDP 端口 $Port）…"
     Start-Qoder $qoder $debugArgs
+    # 注入、重载和新窗口由 wide 的持久 CDP 连接处理。
+    if ($LaunchOnly) { Stop-RunTranscript; exit 0 }
     $targets = @(Wait-Cdp $Port 20)
 
     if ($targets.Count -eq 0) {

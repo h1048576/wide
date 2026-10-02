@@ -14,7 +14,7 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
     safeFontFamily: font, cssFontFamily: font,
     ContentFontSize: String(settings.fontSize), ContentFontWeight: String(settings.fontWeight),
     hiddenUiCss: [settings.hideLocalMerge ? '[data-testid="changes-primary-cta"],[data-testid="changes-primary-cta-caret"]{display:none !important;}' : '', settings.hideGitDiff ? '[data-testid="composer-diff-stat-pill"]{display:none !important;}' : ''].join('\n'),
-    changesDisplay: settings.hideChanges ? 'none' : 'revert'
+    hiddenChangesCss: settings.hideChanges ? '[data-testid="chat-summary-panel"]{display:none !important;}' : ''
   }
   const css = template.css.replace(/\$\{(\w+)\}|\$(\w+)/g, (_match, braced, plain) => {
     const key = braced ?? plain

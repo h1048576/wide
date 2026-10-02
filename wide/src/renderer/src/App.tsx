@@ -11,6 +11,8 @@ import { FontControl, SelectControl } from './DropdownControl'
 
 type MenuId = FeatureId | 'settings'
 type SaveDomain = FeatureId | 'appearance' | 'theme' | 'menuOrder'
+type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean }
+const detectionKey = (id: FeatureId, settings: DroidSettings) => JSON.stringify([id, settings.executablePath, settings.launchMode])
 type AppIconProps = { size?: number; strokeWidth?: number }
 function applicationIcon(id: FeatureId, src: string): ComponentType<AppIconProps> {
   return function ApplicationIcon({ size = 20 }) {
@@ -65,13 +67,19 @@ export default function App() {
   function setSettings(value: DroidSettings) { setApplications(current => ({ ...current, [applicationId]: value })) }
   const [appearance, setAppearance] = useState<AppearanceSettings>({ ...DEFAULT_APPEARANCE })
   const [ready, setReady] = useState(false)
-  const [busy, setBusy] = useState<'apply' | 'normal' | null>(null)
+  const [busy, setBusy] = useState<{ id: FeatureId; action: 'apply' | 'normal' } | null>(null)
   const [advanced, setAdvanced] = useState(false)
-  const [installation, setInstallation] = useState<DroidInstallation | null>(null)
-  const [detecting, setDetecting] = useState(false)
-  const [detectionError, setDetectionError] = useState('')
+  const [detections, setDetections] = useState<Record<string, Detection>>({})
+  const detectionCache = useRef(new Map<string, Detection>())
+  const detectionRequests = useRef(new Map<string, Promise<void>>())
+  const detection = detections[detectionKey(applicationId, settings)]
+  const installation = detection?.installation ?? null
+  const detecting = detection?.checking ?? false
+  const detectionError = detection?.error ?? ''
+  const missingInstallation = detection?.checked && !installation
+  const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.1.0')
+  const [version, setVersion] = useState('0.2.1')
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [bootError, setBootError] = useState('')
   const [configWarning, setConfigWarning] = useState('')
@@ -87,7 +95,6 @@ export default function App() {
   const dragClickBlocked = useRef(false)
   const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, theme: 0, menuOrder: 0 })
   const saveErrorsRef = useRef<Partial<Record<SaveDomain, string>>>({})
-  const detectSequence = useRef(0)
   const desktop = !!window.wide
   const isAppSettings = active === 'settings'
   const feature = FEATURES.find(item => item.id === active)
@@ -140,13 +147,28 @@ export default function App() {
     return () => { mounted = false; unsubscribe?.() }
   }, [])
   useEffect(() => {
-    detectSequence.current++; setInstallation(null); setDetectionError(''); setDetecting(false); setAdvanced(false)
+    setAdvanced(false)
     if (active === 'settings' || !ready || !desktop || bootError || errors.executablePath) return
-    detectSequence.current++
-    setInstallation(null); setDetecting(true)
-    const timer = setTimeout(() => { void detect(settings.executablePath) }, 400)
+    if (detectionCache.current.has(detectionKey(applicationId, settings))) return
+    // 路径输入保留防抖，单纯切换应用立即读取各自缓存。
+    const timer = setTimeout(() => { void detect(settings.executablePath, false) }, settings.executablePath ? 400 : 0)
     return () => clearTimeout(timer)
   }, [ready, applicationId, active, settings.executablePath, settings.launchMode, bootError])
+  useEffect(() => {
+    if (!ready || !desktop || bootError) return
+    let cancelled = false
+    const queue = currentMenuOrder.current.filter(id => id !== activeRef.current)
+    const preload = async () => {
+      while (!cancelled && queue.length) {
+        const id = queue.shift()!
+        const value = currentApplications.current[id]
+        if (!settingsErrors(value).executablePath) await requestDetection(id, value, false)
+      }
+    }
+    // 后台最多两个检测任务，避免同时创建六个 PowerShell 进程。
+    void preload(); void preload()
+    return () => { cancelled = true }
+  }, [ready, desktop, bootError])
   useEffect(() => {
     if (!notice || notice.error) return
     const timer = setTimeout(() => setNotice(null), 3500)
@@ -166,7 +188,7 @@ export default function App() {
     }).finally(() => { pending.current.delete(promise) })
     pending.current.add(promise)
   }
-  function updateDroid<K extends keyof DroidSettings>(key: K, value: DroidSettings[K]) {
+  function updateApplication<K extends keyof DroidSettings>(key: K, value: DroidSettings[K]) {
     const next = { ...currentApplications.current[applicationId], [key]: value }
     currentApplications.current[applicationId] = next; setSettings(next)
     const candidate = { ...validApplications.current[applicationId], [key]: value }
@@ -245,21 +267,35 @@ export default function App() {
     }
     window.wide?.windowAction(action)
   }
-  async function detect(path = currentApplications.current[applicationId].executablePath) {
-    if (!window.wide) return
-    const sequence = ++detectSequence.current
-    setDetecting(true); setDetectionError('')
-    try { const result = await window.wide.detect(applicationId, path, settings.launchMode); if (sequence === detectSequence.current) setInstallation(result) }
-    catch (error) { if (sequence === detectSequence.current) { setInstallation(null); setDetectionError(messageOf(error)) } }
-    finally { if (sequence === detectSequence.current) setDetecting(false) }
+  function requestDetection(id: FeatureId, value: DroidSettings, force: boolean): Promise<void> {
+    if (!window.wide) return Promise.resolve()
+    const key = detectionKey(id, value)
+    const existing = detectionRequests.current.get(key)
+    if (existing) return existing
+    if (!force && detectionCache.current.has(key)) return Promise.resolve()
+    const publish = (result: Detection) => {
+      detectionCache.current.set(key, result)
+      setDetections(current => ({ ...current, [key]: result }))
+    }
+    publish({ installation: detectionCache.current.get(key)?.installation ?? null, error: '', checking: true, checked: false })
+    const request = window.wide.detect(id, value.executablePath, value.launchMode, force).then(installation => {
+      publish({ installation, error: '', checking: false, checked: true })
+    }).catch(error => {
+      publish({ installation: null, error: messageOf(error), checking: false, checked: true })
+    }).finally(() => detectionRequests.current.delete(key))
+    detectionRequests.current.set(key, request)
+    return request
+  }
+  function detect(path = currentApplications.current[applicationId].executablePath, force = true) {
+    return requestDetection(applicationId, { ...currentApplications.current[applicationId], executablePath: path }, force)
   }
   async function choose() {
-    try { const path = await window.wide?.chooseExecutable(applicationId); if (path) updateDroid('executablePath', path) }
+    try { const path = await window.wide?.chooseExecutable(applicationId); if (path) updateApplication('executablePath', path) }
     catch (error) { setNotice({ text: messageOf(error), error: true }) }
   }
   async function run(action: 'apply' | 'normal') {
     if (!window.wide || invalid || disabled) return
-    setBusy(action); setNotice(null)
+    setBusy({ id: applicationId, action }); setNotice(null)
     try {
       await Promise.all([...pending.current])
       const result = await window.wide.run(applicationId, action, currentApplications.current[applicationId])
@@ -269,7 +305,7 @@ export default function App() {
     } catch (error) { setNotice({ text: messageOf(error), error: true }) }
     finally { setBusy(null) }
   }
-  function resetDroid() {
+  function resetApplication() {
     const next = { ...defaults }
     currentApplications.current[applicationId] = validApplications.current[applicationId] = next; setSettings(next)
     if (window.wide) persist(applicationId, () => window.wide!.save(applicationId, next))
@@ -317,31 +353,31 @@ export default function App() {
         {bootError && <div className="error-banner">初始化失败：{bootError}</div>}
         {configWarning && <div className="info-banner">{configWarning}</div>}
         {Object.values(saveErrors).length > 0 && <div className="error-banner" role="alert">自动保存失败：{Object.values(saveErrors).join('；')}</div>}
-        <div className="page-header"><div className="page-title-group"><PageIcon size={26} strokeWidth={1.6} /><h1>{title}</h1></div>{!isAppSettings && <button className="button primary start-button" disabled={!desktop || disabled || invalid || detecting || !installation} onClick={() => { void run('apply') }}>{busy === 'apply' ? <RefreshCw size={15} className="spin" /> : <Play size={15} fill="currentColor" />}{busy === 'apply' ? '启动中…' : '启动'}</button>}</div>
+        <div className="page-header"><div className="page-title-group"><PageIcon size={26} strokeWidth={1.6} /><h1>{title}</h1></div>{!isAppSettings && <button className="button primary start-button" disabled={!desktop || disabled || invalid || missingInstallation} onClick={() => { void run('apply') }}>{currentOperation === 'apply' ? <RefreshCw size={15} className="spin" /> : <Play size={15} fill="currentColor" />}{currentOperation === 'apply' ? '启动中…' : '启动'}</button>}</div>
         {!isAppSettings ? <div key={applicationId} className="settings-page">
           <section className="settings-group" aria-label="内容布局"><h2>布局</h2><div className="settings-list">
-            <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateDroid('width', value)} />
-            {capability.maxWidth && <DimensionControl id="maxWidth" label="最大宽度" value={settings.maxWidth} fallback={defaults.maxWidth} disabled={disabled} error={errors.maxWidth} onChange={value => updateDroid('maxWidth', value)} />}
-            {capability.chatHeight && <SettingRow label="输入框高度" htmlFor="chatHeight" error={errors.chatHeight}><div className="number-control"><input id="chatHeight" type="number" min="0" max="9999" step="5" value={settings.chatHeight.endsWith('px') ? settings.chatHeight.slice(0, -2) : ''} placeholder={!settings.chatHeight.endsWith('px') ? settings.chatHeight : undefined} {...inputProps('chatHeight')} onChange={event => updateDroid('chatHeight', `${event.target.value}px`)} /><span>px</span></div></SettingRow>}
+            <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateApplication('width', value)} />
+            {capability.maxWidth && <DimensionControl id="maxWidth" label="最大宽度" value={settings.maxWidth} fallback={defaults.maxWidth} disabled={disabled} error={errors.maxWidth} onChange={value => updateApplication('maxWidth', value)} />}
+            {capability.chatHeight && <SettingRow label="输入框高度" htmlFor="chatHeight" error={errors.chatHeight}><div className="number-control"><input id="chatHeight" type="number" min="0" max="9999" step="5" value={settings.chatHeight.endsWith('px') ? settings.chatHeight.slice(0, -2) : ''} placeholder={!settings.chatHeight.endsWith('px') ? settings.chatHeight : undefined} {...inputProps('chatHeight')} onChange={event => updateApplication('chatHeight', `${event.target.value}px`)} /><span>px</span></div></SettingRow>}
           </div></section>
           <section className="settings-group" aria-label={`${title} 字体`}><h2>字体</h2><div className="settings-list">
-            {capability.fontFamily && <SettingRow label="字体" htmlFor="fontFamily" error={errors.fontFamily}><FontControl label={`${title} 字体`} id="fontFamily" value={settings.fontFamily} disabled={disabled} error={errors.fontFamily} onChange={value => updateDroid('fontFamily', value)} /></SettingRow>}
-            {capability.fontSize && <SettingRow label="字号" htmlFor="fontSize" error={errors.fontSize}><div className="number-control"><input id="fontSize" type="number" min="8" max="72" value={settings.fontSize} {...inputProps('fontSize')} onChange={event => updateDroid('fontSize', Number(event.target.value))} /><span>px</span></div></SettingRow>}
-            <SettingRow label="字重" htmlFor="fontWeight" error={errors.fontWeight}><input id="fontWeight" className="field-input number-input" type="number" min="100" max="1000" step="100" value={settings.fontWeight} {...inputProps('fontWeight')} onChange={event => updateDroid('fontWeight', Number(event.target.value))} /></SettingRow>
+            {capability.fontFamily && <SettingRow label="字体" htmlFor="fontFamily" error={errors.fontFamily}><FontControl label={`${title} 字体`} id="fontFamily" value={settings.fontFamily} disabled={disabled} error={errors.fontFamily} onChange={value => updateApplication('fontFamily', value)} /></SettingRow>}
+            {capability.fontSize && <SettingRow label="字号" htmlFor="fontSize" error={errors.fontSize}><div className="number-control"><input id="fontSize" type="number" min="8" max="72" value={settings.fontSize} {...inputProps('fontSize')} onChange={event => updateApplication('fontSize', Number(event.target.value))} /><span>px</span></div></SettingRow>}
+            <SettingRow label="字重" htmlFor="fontWeight" error={errors.fontWeight}><input id="fontWeight" className="field-input number-input" type="number" min="100" max="1000" step="100" value={settings.fontWeight} {...inputProps('fontWeight')} onChange={event => updateApplication('fontWeight', Number(event.target.value))} /></SettingRow>
           </div></section>
           {(capability.merge || capability.diff || capability.changes || capability.summary) && <section className="settings-group" aria-label={`${title} 界面`}><h2>界面</h2><div className="settings-list">
-            {capability.merge && <SettingRow label="隐藏本地 Merge"><Switch label="隐藏本地 Merge" checked={settings.hideLocalMerge} disabled={disabled} onChange={value => updateDroid('hideLocalMerge', value)} /></SettingRow>}
-            {capability.diff && <SettingRow label="隐藏 Git Diff 统计"><Switch label="隐藏 Git Diff 统计" checked={settings.hideGitDiff} disabled={disabled} onChange={value => updateDroid('hideGitDiff', value)} /></SettingRow>}
-            {capability.changes && <SettingRow label="隐藏右上角更改控件"><Switch label="隐藏右上角更改控件" checked={settings.hideChanges} disabled={disabled} onChange={value => updateDroid('hideChanges', value)} /></SettingRow>}
-            {capability.summary && <SettingRow label="阻止摘要面板自动弹出"><Switch label="阻止摘要面板自动弹出" checked={settings.preventSummary} disabled={disabled} onChange={value => updateDroid('preventSummary', value)} /></SettingRow>}
+            {capability.merge && <SettingRow label="隐藏本地 Merge"><Switch label="隐藏本地 Merge" checked={settings.hideLocalMerge} disabled={disabled} onChange={value => updateApplication('hideLocalMerge', value)} /></SettingRow>}
+            {capability.diff && <SettingRow label="隐藏 Git Diff 统计"><Switch label="隐藏 Git Diff 统计" checked={settings.hideGitDiff} disabled={disabled} onChange={value => updateApplication('hideGitDiff', value)} /></SettingRow>}
+            {capability.changes && <SettingRow label="隐藏右上角更改控件"><Switch label="隐藏右上角更改控件" checked={settings.hideChanges} disabled={disabled} onChange={value => updateApplication('hideChanges', value)} /></SettingRow>}
+            {capability.summary && <SettingRow label="阻止摘要面板自动弹出"><Switch label="阻止摘要面板自动弹出" checked={settings.preventSummary} disabled={disabled} onChange={value => updateApplication('preventSummary', value)} /></SettingRow>}
           </div></section>}
           <section className="settings-group" aria-label={`${title} 应用连接`}><h2>应用</h2><div className="settings-list">
-            {applicationId === 'codex' && platform === 'win32' && <SettingRow label="启动方式"><SelectControl id="launchMode" label="Codex 启动方式" value={settings.launchMode} disabled={disabled} onChange={value => updateDroid('launchMode', value as DroidSettings['launchMode'])} options={[{ value: 'desktop', label: '桌面应用' }, { value: 'codexhost', label: 'CodexHost' }]} /></SettingRow>}
-            <SettingRow label="安装状态"><div className={`installation-value ${installation ? 'connected' : ''}`}><span>{detecting ? '检测中…' : installation ? `${installation.name} ${installation.version}` : desktop ? `未找到 ${applicationId === 'droid' ? 'Droid / Factory' : title}` : '桌面连接未启用'}</span><button className="icon-button" title="重新检测" aria-label="重新检测" disabled={!desktop || detecting || !!busy} onClick={() => { void detect() }}><RefreshCw size={16} className={detecting ? 'spin' : ''} /></button><button className="icon-button" title="选择应用" aria-label="选择应用" disabled={!desktop || !!busy || settings.launchMode === 'codexhost'} onClick={() => { void choose() }}><FolderOpen size={17} /></button></div></SettingRow>
+            {applicationId === 'codex' && platform === 'win32' && <SettingRow label="启动方式"><SelectControl id="launchMode" label="Codex 启动方式" value={settings.launchMode} disabled={disabled} onChange={value => updateApplication('launchMode', value as DroidSettings['launchMode'])} options={[{ value: 'desktop', label: '桌面应用' }, { value: 'codexhost', label: 'CodexHost' }]} /></SettingRow>}
+            <SettingRow label="安装状态"><div className={`installation-value ${installation ? 'connected' : ''}`}><span>{installation ? `${installation.name} ${installation.version}` : detecting ? '检测中…' : desktop ? `未找到 ${applicationId === 'droid' ? 'Droid / Factory' : title}` : '桌面连接未启用'}</span><button className="icon-button" title="重新检测" aria-label="重新检测" disabled={!desktop || detecting || !!busy} onClick={() => { void detect() }}><RefreshCw size={16} className={detecting ? 'spin' : ''} /></button><button className="icon-button" title="选择应用" aria-label="选择应用" disabled={!desktop || !!busy || settings.launchMode === 'codexhost'} onClick={() => { void choose() }}><FolderOpen size={17} /></button></div></SettingRow>
             <SettingRow label="高级设置"><button className={`disclosure-button ${advanced ? 'open' : ''}`} aria-label="高级设置" aria-expanded={advanced} aria-controls="advanced-content" onClick={() => setAdvanced(!advanced)}><ChevronDown size={17} /></button></SettingRow>
-            {advanced && <div id="advanced-content"><SettingRow label="安装路径" htmlFor="executablePath" error={errors.executablePath}><input id="executablePath" className="field-input path-input" placeholder="自动检测" value={settings.executablePath} {...inputProps('executablePath')} disabled={disabled || settings.launchMode === 'codexhost'} title={installation?.path} onChange={event => updateDroid('executablePath', event.target.value)} /></SettingRow>{settings.launchMode !== 'codexhost' && <SettingRow label="调试端口" htmlFor="port" error={errors.port}><input id="port" className="field-input number-input" type="number" min="1024" max="65535" value={settings.port} {...inputProps('port')} onChange={event => updateDroid('port', Number(event.target.value))} /></SettingRow>}</div>}
+            {advanced && <div id="advanced-content"><SettingRow label="安装路径" htmlFor="executablePath" error={errors.executablePath}><input id="executablePath" className="field-input path-input" placeholder="自动检测" value={settings.executablePath} {...inputProps('executablePath')} disabled={disabled || settings.launchMode === 'codexhost'} title={installation?.path} onChange={event => updateApplication('executablePath', event.target.value)} /></SettingRow>{settings.launchMode !== 'codexhost' && <SettingRow label="调试端口" htmlFor="port" error={errors.port}><input id="port" className="field-input number-input" type="number" min="1024" max="65535" value={settings.port} {...inputProps('port')} onChange={event => updateApplication('port', Number(event.target.value))} /></SettingRow>}</div>}
           </div>{detectionError && <p className="field-error detection-error" role="alert">{detectionError}</p>}</section>
-          <div className="settings-actions"><button className="text-button" disabled={disabled} onClick={resetDroid}><RotateCcw size={15} />恢复预设值</button><button className="text-button" disabled={!desktop || disabled || invalid || detecting || !installation} onClick={() => { void run('normal') }}>{busy === 'normal' ? <RefreshCw size={15} className="spin" /> : <RotateCcw size={15} />}{busy === 'normal' ? '恢复中…' : '恢复默认界面'}</button></div>
+          <div className="settings-actions"><button className="text-button" disabled={disabled} onClick={resetApplication}><RotateCcw size={15} />恢复预设值</button><button className="text-button" disabled={!desktop || disabled || invalid || missingInstallation} onClick={() => { void run('normal') }}>{currentOperation === 'normal' ? <RefreshCw size={15} className="spin" /> : <RotateCcw size={15} />}{currentOperation === 'normal' ? '恢复中…' : '恢复默认界面'}</button></div>
           <p className="operation-note">启动或恢复默认界面会重新启动 {title}，请先保存当前工作。</p>
         </div> : isAppSettings ? <div className="settings-page">
           <section className="settings-group" aria-label="应用外观"><h2>外观</h2><div className="settings-list">

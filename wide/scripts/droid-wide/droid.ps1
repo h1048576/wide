@@ -39,7 +39,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-if (-not ('DroidWide.NativeMethods' -as [type])) {
+if (-not $DetectOnly -and -not ('DroidWide.NativeMethods' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -360,7 +360,7 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
                 [void]$ws.CloseAsync(
                     [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
-                    [Threading.CancellationToken]::None
+                    $cts.Token
                 ).GetAwaiter().GetResult()
             }
         } catch {}

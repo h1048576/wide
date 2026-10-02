@@ -1,5 +1,6 @@
 ﻿param(
     [switch]$DetectOnly,
+    [switch]$LaunchOnly,
     [ValidateSet(0, 1)][int]$HideChanges = 1,
     [string]$ExecutablePath,
     [ValidatePattern('^(?:auto|fit-content|(?:0|[1-9][0-9]{0,3})(?:\.[0-9]+)?(?:px|rem|em|vw|vh|%))$')]
@@ -553,12 +554,10 @@ samp,
     background: var(--color-background) !important;
 }
 
-/* 隐藏右上角的“更改”浮动控件。 */
-[data-testid="chat-summary-panel"] {
-    display: $(if ($HideChanges) { 'none' } else { 'revert' }) !important;
-}
+
 "@
 
+    if ($HideChanges) { $css += '[data-testid="chat-summary-panel"] { display: none !important; }' }
     $cssJson = $css | ConvertTo-Json -Compress
     $script = @"
 (() => {
@@ -633,6 +632,8 @@ try {
 
     Write-Step "正在启动 ZCode（CDP 端口 $Port）…"
     Start-ZCode $zcode $debugArguments
+    # 桌面应用通过自己的持久 CDP 连接注入并守护页面，无需等待脚本守护循环。
+    if ($LaunchOnly) { exit 0 }
     $targets = @(Wait-Cdp $Port)
     if ($targets.Count -eq 0) {
         throw "ZCode 已启动，但 http://127.0.0.1:$Port 没有可用的 CDP page target。"

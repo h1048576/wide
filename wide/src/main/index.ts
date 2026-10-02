@@ -43,11 +43,12 @@ function registerIPC() {
     await store.update(current => ({ ...current, menuOrder }))
     return menuOrder
   })
-  handle('wide:detect', (feature: unknown, path: unknown, mode: unknown) => {
+  handle('wide:detect', (feature: unknown, path: unknown, mode: unknown, force: unknown = false) => {
     const id = parseFeatureId(feature)
     if (mode !== 'desktop' && mode !== 'codexhost') throw new Error('启动方式无效')
     if (typeof path !== 'string' || path.length > 4096 || /[\0\r\n]/.test(path)) throw new Error('应用路径无效')
-    return detectApplication(id, path, mode)
+    if (typeof force !== 'boolean') throw new Error('检测参数无效')
+    return detectApplication(id, path, mode, force)
   })
   handle('wide:choose', async (feature: unknown) => {
     const id = parseFeatureId(feature)
@@ -65,9 +66,10 @@ function registerIPC() {
     if (busy) throw new Error('应用操作正在执行，请稍后再试。')
     const settings = parseSettings(input, id)
     let failureDetail = ''
+    let operationRunning = true
     const report = (message: string, level: OperationLevel = 'info') => {
       if (level !== 'error') return
-      if (busy) failureDetail = message.replace(/^失败：/, '')
+      if (operationRunning) failureDetail = message.replace(/^失败：/, '')
       else if (window && !window.isDestroyed()) window.webContents.send('wide:notice', { success: false, message })
     }
     busy = true
@@ -80,6 +82,7 @@ function registerIPC() {
       const message = failureDetail || (error instanceof Error ? error.message : String(error))
       return { success: false, message }
     } finally {
+      operationRunning = false
       busy = false
       if (quitting) app.quit()
     }

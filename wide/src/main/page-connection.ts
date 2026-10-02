@@ -54,7 +54,7 @@ class Cdp {
   on(method: string, callback: () => void) { this.listeners.set(method, callback) }
 }
 
-export function createPageConnection(name: string, styleId: string) {
+export function createPageConnection(name: string, styleId: string, acceptsPage: (url: string) => boolean = () => true) {
   const sessions = new Map<string, Cdp>()
   let watchTimer: ReturnType<typeof setInterval> | undefined
   let watchGeneration = 0
@@ -70,7 +70,7 @@ export function createPageConnection(name: string, styleId: string) {
     if (!response.ok) throw new Error('无法读取 应用调试页面')
     const data = await response.json()
     if (!Array.isArray(data)) throw new Error('应用调试响应格式无效')
-    return data.filter((target: Target) => target.type === 'page' && typeof target.webSocketDebuggerUrl === 'string' && typeof target.url === 'string' && !target.url.startsWith('devtools://') && target.url !== 'about:blank')
+    return data.filter((target: Target) => target.type === 'page' && typeof target.webSocketDebuggerUrl === 'string' && typeof target.url === 'string' && !target.url.startsWith('devtools://') && target.url !== 'about:blank' && acceptsPage(target.url))
   }
   async function attachTarget(target: Target, source: string, log: WriteLog, generation: number) {
     const cdp = new Cdp(target.webSocketDebuggerUrl)
@@ -103,11 +103,8 @@ export function createPageConnection(name: string, styleId: string) {
     try {
       const targets = await readTargets(port)
       if (!targets.length) throw new Error('应用没有可用的调试页面')
-      let attached = 0
-      for (const target of targets) {
-        try { await attachTarget(target, source, log, generation); attached++ } catch { /* 正在加载的窗口下一轮重试。 */ }
-      }
-      if (!attached) throw new Error(`${name} 主页面仍在加载，暂时无法应用设置。`)
+      const results = await Promise.allSettled(targets.map(target => attachTarget(target, source, log, generation)))
+      if (!results.some(result => result.status === 'fulfilled')) throw new Error(`${name} 主页面仍在加载，暂时无法应用设置。`)
     } catch (error) { dispose(); throw error }
     let checking = false
     let unavailable = 0

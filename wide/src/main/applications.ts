@@ -23,7 +23,7 @@ const connections = new Map<FeatureId, ReturnType<typeof createPageConnection>>(
 function connection(id: FeatureId) {
   let value = connections.get(id)
   if (!value) {
-    value = createPageConnection(APPLICATIONS[id].name, `${id}-wide-${id === 'codex' || id === 'paseo' ? 'width' : 'ui'}-override`)
+    value = createPageConnection(APPLICATIONS[id].name, `${id}-wide-${id === 'codex' || id === 'paseo' ? 'width' : 'ui'}-override`, id === 'qoder' ? url => /^qoder(?:-cn)?-app:\/\/renderer\//.test(url) : undefined)
     connections.set(id, value)
   }
   return value
@@ -39,7 +39,22 @@ async function detectHost(): Promise<DroidInstallation> {
   const data = JSON.parse(stdout.trim())
   return { name: 'CodexHost', path: data.path, version: data.version || '未知版本' }
 }
-export async function detectApplication(id: FeatureId, path: string, mode: ApplicationSettings['launchMode'] = 'desktop'): Promise<DroidInstallation | null> {
+const installationCache = new Map<string, { value: DroidInstallation | null; expires: number }>()
+const installationRequests = new Map<string, Promise<DroidInstallation | null>>()
+export function detectApplication(id: FeatureId, path: string, mode: ApplicationSettings['launchMode'] = 'desktop', force = false): Promise<DroidInstallation | null> {
+  const key = JSON.stringify([id, path, mode])
+  const cached = installationCache.get(key)
+  if (!force && cached && cached.expires > Date.now()) return Promise.resolve(cached.value)
+  const pending = installationRequests.get(key)
+  if (pending) return pending
+  const request = resolveApplication(id, path, mode).then(value => {
+    installationCache.set(key, { value, expires: Date.now() + 60000 })
+    return value
+  }).finally(() => installationRequests.delete(key))
+  installationRequests.set(key, request)
+  return request
+}
+async function resolveApplication(id: FeatureId, path: string, mode: ApplicationSettings['launchMode']): Promise<DroidInstallation | null> {
   if (id === 'droid') return detectDroid(path)
   const name = APPLICATIONS[id].name
   if (process.platform === 'win32') {
@@ -92,7 +107,7 @@ function executeScript(command: string, name: string, report: Report): Promise<n
   return new Promise((resolve, reject) => {
     const child = spawn(powershell, psArgs(command), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     const output = new StringDecoder('utf8'), errorOutput = new StringDecoder('utf8')
-    let buffer = '', selectedPort: number | undefined, failure = ''
+    let buffer = '', selectedPort: number | undefined, failure = '', settled = false
     const consume = (chunk: string) => {
       buffer += chunk
       const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''
@@ -104,12 +119,21 @@ function executeScript(command: string, name: string, report: Report): Promise<n
     }
     child.stdout.on('data', chunk => consume(output.write(chunk)))
     child.stderr.on('data', chunk => consume(errorOutput.write(chunk)))
-    const timer = setTimeout(() => { child.kill(); reject(new Error(`${name} 操作超过 120 秒，请检查应用后重试。`)) }, 120000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.once('close', code => {
-      clearTimeout(timer); consume(output.end() + errorOutput.end() + '\n')
+    let exitTimer: ReturnType<typeof setTimeout> | undefined
+    const finish = (code: number | null, error?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer); clearTimeout(exitTimer)
+      consume(output.end() + errorOutput.end() + '\n')
+      // Electron 子进程可能继承管道；启动脚本退出后不再等待应用关闭管道。
+      child.stdout.destroy(); child.stderr.destroy()
+      if (error) { reject(error); return }
       code === 0 ? resolve(selectedPort) : reject(new Error(failure || `${name} 操作失败（退出码 ${code ?? '未知'}），请检查安装路径。`))
-    })
+    }
+    const timer = setTimeout(() => { child.kill(); finish(null, new Error(`${name} 操作超过 120 秒，请检查应用后重试。`)) }, 120000)
+    child.once('error', error => finish(null, error))
+    child.once('exit', code => { exitTimer = setTimeout(() => finish(code), 100) })
+    child.once('close', code => finish(code))
   })
 }
 async function connectPages(id: Exclude<FeatureId, 'droid'>, port: number, settings: ApplicationSettings, report: Report) {
@@ -138,6 +162,7 @@ async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'no
   if (capability.summary) args.push('-PreventSummary', String(Number(settings.preventSummary)))
   if (settings.executablePath && settings.launchMode !== 'codexhost') args.push('-ExecutablePath', quote(settings.executablePath))
   if (action === 'normal') args.push('-Normal')
+  else if (id === 'zcode' || id === 'qoder') args.push('-LaunchOnly')
   const port = await executeScript(args.join(' '), capability.name, report)
   if (action === 'apply') {
     if (!port) throw new Error(`${capability.name} 实际调试端口未返回，请重新启动。`)

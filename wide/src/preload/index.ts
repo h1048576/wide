@@ -7,7 +7,7 @@ const api: WideApi = {
   setTheme: theme => ipcRenderer.invoke('wide:theme', theme),
   setAppearance: settings => ipcRenderer.invoke('wide:appearance', settings),
   setMenuOrder: order => ipcRenderer.invoke('wide:menu-order', order),
-  detect: (id, path, mode) => ipcRenderer.invoke('wide:detect', id, path, mode),
+  detect: (id, path, mode, force = false) => ipcRenderer.invoke('wide:detect', id, path, mode, force),
   chooseExecutable: id => ipcRenderer.invoke('wide:choose', id),
   run: (id, action, settings) => ipcRenderer.invoke('wide:run', id, action, settings),
   onNotice: callback => {
