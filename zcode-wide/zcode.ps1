@@ -384,7 +384,7 @@ function Get-CdpTargets([int]$CdpPort) {
     }
 }
 
-function Wait-Cdp([int]$CdpPort, [int]$Seconds = 15) {
+function Wait-Cdp([int]$CdpPort, [int]$Seconds = 60) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     do {
         $targets = @(Get-CdpTargets $CdpPort)
@@ -399,8 +399,9 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
     $cancellation = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(3))
     try {
         [void]$webSocket.ConnectAsync([Uri]$WebSocketUrl, $cancellation.Token).GetAwaiter().GetResult()
+        $commandId = Get-Random -Minimum 1000 -Maximum 999999
         $payload = @{
-            id     = Get-Random -Minimum 1000 -Maximum 999999
+            id     = $commandId
             method = $Method
             params = $Params
         } | ConvertTo-Json -Compress -Depth 8
@@ -416,14 +417,38 @@ function Invoke-CdpCommand([string]$WebSocketUrl, [string]$Method, [hashtable]$P
 
         $buffer = New-Object byte[] 65536
         $receiveSegment = [ArraySegment[byte]]::new($buffer)
-        [void]$webSocket.ReceiveAsync($receiveSegment, $cancellation.Token).GetAwaiter().GetResult()
+        while ($true) {
+            $message = [IO.MemoryStream]::new()
+            try {
+                do {
+                    $received = $webSocket.ReceiveAsync($receiveSegment, $cancellation.Token).GetAwaiter().GetResult()
+                    if ($received.MessageType -eq [Net.WebSockets.WebSocketMessageType]::Close) {
+                        throw 'CDP 连接在返回命令结果前关闭。'
+                    }
+                    $message.Write($buffer, 0, $received.Count)
+                } while (-not $received.EndOfMessage)
+                $response = [Text.Encoding]::UTF8.GetString($message.ToArray()) | ConvertFrom-Json
+            } finally {
+                $message.Dispose()
+            }
+
+            # 忽略异步事件，只接受当前命令的完整响应。
+            if ($response.id -ne $commandId) { continue }
+            if ($response.error) {
+                throw "CDP $Method 失败：$($response.error.message)"
+            }
+            if ($response.result.exceptionDetails) {
+                throw "页面脚本执行失败：$($response.result.exceptionDetails | ConvertTo-Json -Compress -Depth 8)"
+            }
+            return $response.result
+        }
     } finally {
         try {
             if ($webSocket.State -eq [Net.WebSockets.WebSocketState]::Open) {
                 [void]$webSocket.CloseAsync(
                     [Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
-                    [Threading.CancellationToken]::None
+                    $cancellation.Token
                 ).GetAwaiter().GetResult()
             }
         } catch {}
@@ -536,23 +561,31 @@ samp,
       style.id = id;
       (document.head || document.documentElement).appendChild(style);
     }
-    style.textContent = $cssJson;
-    return true;
+    const css = $cssJson;
+    if (style.textContent !== css) style.textContent = css;
+    return style.isConnected && style.textContent === css;
   };
 
-  if (document.head || document.documentElement) return apply();
-  document.addEventListener('DOMContentLoaded', apply, { once: true });
-  return true;
+  if (!document.documentElement || document.readyState === 'loading') return false;
+  if (!location.href || location.href === 'about:blank') return false;
+  return apply();
 })();
 "@
 
     foreach ($target in $Targets) {
-        Invoke-CdpCommand $target.webSocketDebuggerUrl 'Runtime.evaluate' @{
-            expression    = $script
-            returnByValue = $true
-        }
-        Invoke-CdpCommand $target.webSocketDebuggerUrl 'Page.addScriptToEvaluateOnNewDocument' @{
-            source = $script
+        try {
+            $result = Invoke-CdpCommand $target.webSocketDebuggerUrl 'Runtime.evaluate' @{
+                expression    = $script
+                returnByValue = $true
+            }
+            if ($result.result.value -eq $true) {
+                [pscustomobject]@{ TargetId = $target.id; Success = $true; Error = '' }
+            } else {
+                [pscustomobject]@{ TargetId = $target.id; Success = $false; Error = '页面仍在加载' }
+            }
+        } catch {
+            # 页面导航、关闭和渲染进程切换都可能暂时断开连接，下一轮重新发现页面。
+            [pscustomobject]@{ TargetId = $target.id; Success = $false; Error = $_.Exception.Message }
         }
     }
 }
@@ -592,10 +625,40 @@ try {
         throw "ZCode 已启动，但 http://127.0.0.1:$Port 没有可用的 CDP page target。"
     }
 
-    Inject-ZCodeUi $targets $Width $FontFamily $FontWeight
-    Write-Step "注入成功：对话区宽度已设为 $Width，字体已设为 $FontFamily，字重已设为 $FontWeight，右上角更改控件已隐藏。"
-    Write-Step '以后用 wide.sh 启动即可；要恢复 ZCode 默认样式，运行 normal.sh。'
-    Start-Sleep -Seconds 1
+    # 绑定本次启动的进程，避免再次运行 wide.sh / normal.sh 后旧任务继续注入。
+    $sessionProcesses = @(Get-ZCodeProcesses $zcode | ForEach-Object {
+        Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    })
+    $injected = $false
+    $deadline = (Get-Date).AddSeconds(60)
+    $lastError = '没有可用的页面'
+    $lastStatus = ''
+    Write-Step '正在等待页面加载并确认样式；后台任务会持续处理重载和新窗口。'
+    while (@($sessionProcesses | Where-Object { -not $_.HasExited }).Count -gt 0) {
+        $results = @(Inject-ZCodeUi $targets $Width $FontFamily $FontWeight)
+        $successful = @($results | Where-Object { $_.Success })
+        $failed = @($results | Where-Object { -not $_.Success })
+        if ($failed.Count -gt 0) { $lastError = $failed[0].Error }
+
+        if ($successful.Count -gt 0 -and -not $injected) {
+            $injected = $true
+            Write-Step "注入成功并已校验：对话区宽度 $Width，字体 $FontFamily，字重 $FontWeight，右上角更改控件已隐藏。"
+            Write-Step '后台持续维护样式；要恢复 ZCode 默认样式，运行 normal.sh。'
+        }
+        if (-not $injected -and (Get-Date) -ge $deadline) {
+            throw "等待样式注入超时：$lastError"
+        }
+
+        $status = if ($targets.Count -eq 0) { '暂未发现页面，正在重试。' }
+            elseif ($failed.Count -gt 0) { "部分页面尚未完成注入，将自动重试：$lastError" }
+            else { '' }
+        if ($status -and $status -ne $lastStatus) { Write-Step $status }
+        $lastStatus = $status
+        Start-Sleep -Seconds 1
+        $targets = @(Get-CdpTargets $Port)
+    }
+    if (-not $injected) { throw 'ZCode 在样式注入成功前已退出。' }
+    Write-Step '本次 ZCode 已退出，样式维护任务结束。'
     exit 0
 } catch {
     Write-Host "[ZCode Wide] 失败：$($_.Exception.Message)" -ForegroundColor Red

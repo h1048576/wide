@@ -1,8 +1,10 @@
-[ZCode Wide] 检测到 ZCode 3.14.3.7762：D:\Program Files\ZCode\ZCode.exe
+[ZCode Wide] 检测到 ZCode 3.14.4.7912：d:\Program Files\ZCode\ZCode.exe
 [ZCode Wide] 正在关闭已运行的 ZCode…
 [ZCode Wide] 对话区目标宽度：90rem
 [ZCode Wide] 中英文字体：Cascadia Mono, LXGW WenKai Mono
+[ZCode Wide] 字重：300
 [ZCode Wide] 注意：本次 ZCode 运行期间会开放仅限 127.0.0.1 的 Chromium CDP 调试端口。
 [ZCode Wide] 正在启动 ZCode（CDP 端口 9335）…
-[ZCode Wide] 注入成功：对话区宽度已设为 90rem，字体已设为 Cascadia Mono, LXGW WenKai Mono，右上角更改控件已隐藏。
-[ZCode Wide] 以后用 wide.sh 启动即可；要恢复 ZCode 默认样式，运行 normal.sh。
+[ZCode Wide] 正在等待页面加载并确认样式；后台任务会持续处理重载和新窗口。
+[ZCode Wide] 注入成功并已校验：对话区宽度 90rem，字体 Cascadia Mono, LXGW WenKai Mono，字重 300，右上角更改控件已隐藏。
+[ZCode Wide] 后台持续维护样式；要恢复 ZCode 默认样式，运行 normal.sh。

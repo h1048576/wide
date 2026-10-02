@@ -1,0 +1,120 @@
+export type FeatureId = 'codex' | 'droid' | 'paseo' | 'qoder' | 'workbuddy' | 'zcode'
+export type Theme = 'system' | 'light' | 'dark'
+export interface DroidSettings {
+  width: string
+  maxWidth: string
+  chatHeight: string
+  fontFamily: string
+  fontSize: number
+  fontWeight: number
+  hideLocalMerge: boolean
+  hideGitDiff: boolean
+  port: number
+  executablePath: string
+  hideChanges: boolean
+  preventSummary: boolean
+  launchMode: 'desktop' | 'codexhost'
+}
+export interface AppearanceSettings { fontFamily: string; fontSize: number }
+export type ApplicationSettings = DroidSettings
+export type ApplicationPreferences = Record<FeatureId, ApplicationSettings>
+export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; menuOrder: FeatureId[]; menuOrderVersion: number }
+export interface DroidInstallation { name: string; path: string; version: string }
+export type OperationLevel = 'info' | 'success' | 'error'
+export interface JobResult { success: boolean; message: string }
+export interface Bootstrap { preferences: Preferences; platform: string; version: string; configWarning?: string }
+export interface WideApi {
+  bootstrap(): Promise<Bootstrap>
+  save(id: FeatureId, settings: ApplicationSettings): Promise<ApplicationSettings>
+  setTheme(theme: Theme): Promise<void>
+  setAppearance(settings: AppearanceSettings): Promise<AppearanceSettings>
+  setMenuOrder(order: FeatureId[]): Promise<FeatureId[]>
+  detect(id: FeatureId, path: string, mode: ApplicationSettings['launchMode']): Promise<DroidInstallation | null>
+  chooseExecutable(id: FeatureId): Promise<string | null>
+  run(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings): Promise<JobResult>
+  onNotice(callback: (result: JobResult) => void): () => void
+  windowAction(action: 'minimize' | 'maximize' | 'close'): void
+}
+export const DEFAULT_APPEARANCE: AppearanceSettings = { fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17 }
+export const DEFAULT_MENU_ORDER: FeatureId[] = ['codex', 'droid', 'zcode', 'workbuddy', 'qoder', 'paseo']
+export const MENU_ORDER_VERSION = 2
+export function normalizeMenuOrder(input: unknown): FeatureId[] {
+  const saved = Array.isArray(input) ? input.filter((id): id is FeatureId => DEFAULT_MENU_ORDER.includes(id)) : []
+  return [...new Set([...saved, ...DEFAULT_MENU_ORDER])]
+}
+export function parseMenuOrder(input: unknown): FeatureId[] {
+  if (!Array.isArray(input) || input.length !== DEFAULT_MENU_ORDER.length || new Set(input).size !== input.length || input.some(id => !DEFAULT_MENU_ORDER.includes(id))) throw new Error('应用菜单顺序无效')
+  return [...input] as FeatureId[]
+}
+export const SYSTEM_FONT = '"Segoe UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif'
+export function appearanceErrors(value: AppearanceSettings): Partial<Record<keyof AppearanceSettings, string>> {
+  const errors: Partial<Record<keyof AppearanceSettings, string>> = {}
+  if (typeof value.fontFamily !== 'string' || !value.fontFamily.trim() || value.fontFamily.length > 300 || /[;{}<>\r\n]/.test(value.fontFamily)) errors.fontFamily = '请输入有效的字体名称'
+  if (!Number.isInteger(value.fontSize) || value.fontSize < 10 || value.fontSize > 24) errors.fontSize = '字号须为 10–24 的整数'
+  return errors
+}
+export function parseAppearance(input: unknown): AppearanceSettings {
+  if (!input || typeof input !== 'object') throw new Error('应用字体设置格式无效')
+  const value = input as AppearanceSettings
+  const errors = Object.values(appearanceErrors(value))
+  if (errors.length) throw new Error(errors[0])
+  return { fontFamily: value.fontFamily, fontSize: value.fontSize }
+}
+export const DEFAULT_DROID: DroidSettings = {
+  width: '70vw', maxWidth: '90rem', chatHeight: '80px',
+  fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, fontWeight: 300,
+  hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, launchMode: 'desktop', port: 9335, executablePath: ''
+}
+export const APPLICATIONS = {
+  codex: { name: 'Codex', maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
+  droid: { name: 'Droid', maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  zcode: { name: 'ZCode', maxWidth: false, chatHeight: false, fontFamily: true, fontSize: false, merge: false, diff: false, changes: true, summary: false },
+  workbuddy: { name: 'WorkBuddy', maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  qoder: { name: 'Qoder', maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  paseo: { name: 'Paseo', maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
+} satisfies Record<FeatureId, object>
+export const DEFAULT_APPLICATIONS: ApplicationPreferences = {
+  codex: { ...DEFAULT_DROID, width: '80rem', fontSize: 16, fontWeight: 100, preventSummary: true, port: 9331 },
+  droid: { ...DEFAULT_DROID },
+  zcode: { ...DEFAULT_DROID, width: '90rem', hideChanges: true, port: 9332 },
+  workbuddy: { ...DEFAULT_DROID, width: '100%', fontWeight: 200, port: 9333 },
+  qoder: { ...DEFAULT_DROID, width: '80rem', fontSize: 18, port: 9334 },
+  paseo: { ...DEFAULT_DROID, width: '100rem', hideLocalMerge: true, hideGitDiff: true, port: 9336 }
+}
+export function parseFeatureId(input: unknown): FeatureId {
+  if (typeof input !== 'string' || !DEFAULT_MENU_ORDER.includes(input as FeatureId)) throw new Error('应用标识无效')
+  return input as FeatureId
+}
+const size = '(?:0|[1-9][0-9]{0,3})(?:\\.[0-9]+)?'
+const widthPattern = new RegExp(`^(?:auto|fit-content|${size}(?:px|rem|em|vw|vh|%))$`)
+const maxPattern = new RegExp(`^(?:none|${size}(?:px|rem|em|vw|vh|%))$`)
+const heightPattern = new RegExp(`^(?:auto|${size}(?:px|rem|em|vh|%))$`)
+export function settingsErrors(value: DroidSettings): Partial<Record<keyof DroidSettings, string>> {
+  const errors: Partial<Record<keyof DroidSettings, string>> = {}
+  if (!widthPattern.test(value.width)) errors.width = '请输入有效宽度，例如 70vw、80% 或 1200px'
+  if (!maxPattern.test(value.maxWidth)) errors.maxWidth = '请输入有效最大宽度，例如 90rem 或 1200px'
+  if (!heightPattern.test(value.chatHeight)) errors.chatHeight = '请输入有效高度，例如 80px'
+  if (!Number.isInteger(value.fontSize) || value.fontSize < 8 || value.fontSize > 72) errors.fontSize = '字号须为 8–72 的整数'
+  if (!Number.isInteger(value.fontWeight) || value.fontWeight < 100 || value.fontWeight > 1000) errors.fontWeight = '字重须为 100–1000 的整数'
+  if (!value.fontFamily.trim() || value.fontFamily.length > 300 || /[;{}<>\r\n]/.test(value.fontFamily)) errors.fontFamily = '请填写字体名称，不能包含 CSS 控制字符'
+  if (!Number.isInteger(value.port) || value.port < 1024 || value.port > 65535) errors.port = '端口须为 1024–65535 的整数'
+  if (typeof value.executablePath !== 'string' || /[\r\n\0]/.test(value.executablePath)) errors.executablePath = '应用路径无效'
+  if (typeof value.hideLocalMerge !== 'boolean' || typeof value.hideGitDiff !== 'boolean') errors.hideLocalMerge = '隐藏选项无效'
+  if (typeof value.hideChanges !== 'boolean' || typeof value.preventSummary !== 'boolean') errors.hideChanges = '界面选项无效'
+  if (!['desktop', 'codexhost'].includes(value.launchMode)) errors.launchMode = '启动方式无效'
+  return errors
+}
+export function parseSettings(input: unknown, id: FeatureId = 'droid'): DroidSettings {
+  if (!input || typeof input !== 'object') throw new Error('设置格式无效')
+  const value = input as Record<string, unknown>
+  for (const [key, fallback] of Object.entries(DEFAULT_DROID)) {
+    if (typeof value[key] !== typeof fallback) throw new Error(`设置 ${key} 的类型无效`)
+  }
+  const clean = Object.fromEntries(Object.keys(DEFAULT_DROID).map(key => [key, value[key]])) as unknown as DroidSettings
+  const errors = Object.values(settingsErrors(clean))
+  if (errors.length) throw new Error(errors[0])
+  const capability = APPLICATIONS[id]
+  return { ...clean, hideLocalMerge: capability.merge && clean.hideLocalMerge, hideGitDiff: capability.diff && clean.hideGitDiff,
+    hideChanges: capability.changes && clean.hideChanges, preventSummary: capability.summary && clean.preventSummary,
+    launchMode: id === 'codex' ? clean.launchMode : 'desktop' }
+}

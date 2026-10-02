@@ -1,0 +1,26 @@
+{
+  "codex": {
+    "source": "installed application asset",
+    "originalPath": "C:/Program Files/WindowsApps/OpenAI.Codex_26.928.4866.0_x64__2p2nqsd0c76g0/assets/Square44x44Logo.targetsize-256_altform-unplated.png"
+  },
+  "droid": {
+    "source": "official website favicon",
+    "url": "https://factory.com/favicon.svg"
+  },
+  "paseo": {
+    "source": "installed application asset",
+    "originalPath": "D:/Program Files/Paseo/resources/app-dist/pwa-icon-512.png"
+  },
+  "qoder": {
+    "source": "installed application asset",
+    "originalPath": "D:/Program Files/Qoder CN/resources/app-icon.ico"
+  },
+  "workbuddy": {
+    "source": "installed application asset",
+    "originalPath": "C:/Users/AD86/AppData/Local/Programs/WorkBuddy/resources/app.asar.unpacked/resources/icon.png"
+  },
+  "zcode": {
+    "source": "installed application asset",
+    "originalPath": "D:/Program Files/ZCode/resources/icon.png"
+  }
+}
