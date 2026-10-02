@@ -1,10 +1,10 @@
 import { app } from 'electron'
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_MENU_ORDER, MENU_ORDER_VERSION, normalizeMenuOrder, parseAppearance, parseSettings, type Preferences, type ApplicationPreferences } from '../shared/types'
+import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, DEFAULT_MENU_ORDER, MENU_ORDER_VERSION, normalizeMenuOrder, parseAppearance, parseHarnessSettings, parseSettings, type Preferences, type ApplicationPreferences } from '../shared/types'
 
 export class Store {
-  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, startupMode: 'default', menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION }
+  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, harness: { ...DEFAULT_HARNESS_SETTINGS }, startupMode: 'default', menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION }
   warning?: string
   private queue: Promise<void> = Promise.resolve()
   private pending = 0
@@ -26,6 +26,7 @@ export class Store {
         theme: ['system', 'light', 'dark'].includes(data.theme) ? data.theme : 'system',
         startupMode: data.startupMode === 'maximized' ? 'maximized' : 'default',
         appearance: data.appearance === undefined ? { ...DEFAULT_APPEARANCE } : parseAppearance(data.appearance),
+        harness: data.harness === undefined ? { ...DEFAULT_HARNESS_SETTINGS } : parseHarnessSettings({ ...DEFAULT_HARNESS_SETTINGS, ...data.harness }),
         menuOrder: data.menuOrderVersion === MENU_ORDER_VERSION ? normalizeMenuOrder(data.menuOrder) : [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION
       }
     } catch (error) {

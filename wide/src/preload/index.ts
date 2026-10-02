@@ -8,6 +8,7 @@ const api: WideApi = {
   setStartupMode: mode => ipcRenderer.invoke('wide:startup-mode', mode),
   setOpenAtLogin: enabled => ipcRenderer.invoke('wide:open-at-login', enabled),
   setAppearance: settings => ipcRenderer.invoke('wide:appearance', settings),
+  setHarnessSettings: settings => ipcRenderer.invoke('wide:harness-settings', settings),
   setMenuOrder: order => ipcRenderer.invoke('wide:menu-order', order),
   detect: (id, path, force = false) => ipcRenderer.invoke('wide:detect', id, path, force),
   chooseExecutable: id => ipcRenderer.invoke('wide:choose', id),
@@ -27,6 +28,12 @@ const api: WideApi = {
   modelDelete: target => ipcRenderer.invoke('wide:model-delete', target),
   modelReorder: order => ipcRenderer.invoke('wide:model-reorder', order),
   modelBatch: change => ipcRenderer.invoke('wide:model-batch', change),
+  mcpsInventory: () => ipcRenderer.invoke('wide:mcps-inventory'),
+  mcpsRefresh: harness => ipcRenderer.invoke('wide:mcps-refresh', harness),
+  mcpDetail: target => ipcRenderer.invoke('wide:mcp-detail', target),
+  mcpPreview: harness => ipcRenderer.invoke('wide:mcp-preview', harness),
+  mcpSave: change => ipcRenderer.invoke('wide:mcp-save', change),
+  mcpDelete: target => ipcRenderer.invoke('wide:mcp-delete', target),
   onBatchProgress: callback => {
     const handler = (_event: Electron.IpcRendererEvent, progress: BatchProgress) => callback(progress)
     ipcRenderer.on('wide:batch-progress', handler)

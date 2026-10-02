@@ -10,12 +10,12 @@ import { DEFAULT_MODEL_BASE_URL, type CustomModel, type ModelBatchChange, type M
 const harnesses: ModelHarnessId[] = ['claude', 'droid', 'dsh', 'pi', 'opencode']
 const paths: Record<ModelHarnessId, string> = { claude: '~/.claude/settings.json', droid: '~/.factory/settings.json', dsh: '~/.dsh/profiles/{desktop,web}/cordis.patch.yml', pi: '~/.pi/agent/models.json', opencode: '~/.config/opencode/opencode.json' }
 const messageOf = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error)
-export default function ModelsSection({ disabled, onBusyChange }: { disabled: boolean; onBusyChange: (busy: boolean) => void }) {
+export default function ModelsSection({ defaultCollapsed, disabled, onBusyChange }: { defaultCollapsed: boolean; disabled: boolean; onBusyChange: (busy: boolean) => void }) {
   const [inventory, setInventory] = useState<ModelsInventory>({ sources: [] })
   const [loading, setLoading] = useState(!!window.wide)
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<Partial<Record<ModelHarnessId, boolean>>>({})
-  const [sectionOpen, setSectionOpen] = useState(true)
+  const [sectionOpen, setSectionOpen] = useState(!defaultCollapsed)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [batch, setBatch] = useState<{ action: ModelBatchChange['action']; returnFocus: HTMLElement | null } | null>(null)
   const [preview, setPreview] = useState<{ harness: ModelHarnessId; document: ModelDocument; returnFocus: HTMLElement | null } | null>(null)

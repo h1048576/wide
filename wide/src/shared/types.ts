@@ -21,9 +21,17 @@ export interface DroidSettings {
   preventSummary: boolean
 }
 export interface AppearanceSettings { fontFamily: string; fontSize: number; mode: AppearanceMode }
+export interface HarnessSettings { skillsCollapsed: boolean; modelsCollapsed: boolean; mcpsCollapsed: boolean }
+export const DEFAULT_HARNESS_SETTINGS: HarnessSettings = { skillsCollapsed: true, modelsCollapsed: true, mcpsCollapsed: true }
+export function parseHarnessSettings(input: unknown): HarnessSettings {
+  if (!input || typeof input !== 'object') throw new Error('Harness 设置格式无效')
+  const value = input as HarnessSettings
+  if (Object.keys(DEFAULT_HARNESS_SETTINGS).some(key => typeof value[key as keyof HarnessSettings] !== 'boolean')) throw new Error('Harness 折叠设置无效')
+  return { skillsCollapsed: value.skillsCollapsed, modelsCollapsed: value.modelsCollapsed, mcpsCollapsed: value.mcpsCollapsed }
+}
 export type ApplicationSettings = DroidSettings
 export type ApplicationPreferences = Record<FeatureId, ApplicationSettings>
-export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number }
+export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; harness: HarnessSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number }
 export interface DroidInstallation { name: string; path: string; version: string }
 export type OperationLevel = 'info' | 'success' | 'error'
 export interface JobResult { success: boolean; message: string }
@@ -59,6 +67,18 @@ export interface ModelOrder { sourceId: string; models: ModelTarget[] }
 export interface ModelBatchChange { action: 'replace' | 'add' | 'delete'; model: string; originalModel?: string }
 export interface ModelBatchResult { changed: number; skipped: number; harnesses: ModelHarnessId[] }
 export const DEFAULT_MODEL_BASE_URL = 'http://127.0.0.1:20128'
+export type McpHarnessId = 'claude' | 'codex'
+export type McpTransport = 'stdio' | 'http' | 'sse' | 'ws'
+export interface McpServer { name: string; transport: string; description: string; revision: string }
+export interface McpSource { harness: McpHarnessId; path: string; servers: McpServer[]; editable: boolean; error?: string }
+export interface McpsInventory { sources: McpSource[] }
+export interface McpTarget { harness: McpHarnessId; name: string; revision: string }
+export interface McpFields {
+  name: string; transport: McpTransport; command: string; args: string[]; env: Record<string, string>
+  url: string; headers: Record<string, string>; cwd: string; bearerTokenEnvVar: string; envHeaders: Record<string, string>
+}
+export interface McpChange { harness: McpHarnessId; target?: McpTarget; copyFrom?: McpTarget; fields: McpFields }
+export interface McpDocument { path: string; content: string; format: 'json' | 'toml' }
 export interface Bootstrap { preferences: Preferences; platform: string; version: string; windowMaximized: boolean; openAtLogin: boolean; startupAvailable: boolean; configWarning?: string }
 export interface WideApi {
   bootstrap(): Promise<Bootstrap>
@@ -67,6 +87,7 @@ export interface WideApi {
   setStartupMode(mode: StartupMode): Promise<void>
   setOpenAtLogin(enabled: boolean): Promise<boolean>
   setAppearance(settings: AppearanceSettings): Promise<AppearanceSettings>
+  setHarnessSettings(settings: HarnessSettings): Promise<HarnessSettings>
   setMenuOrder(order: FeatureId[]): Promise<FeatureId[]>
   detect(id: FeatureId, path: string, force?: boolean): Promise<DroidInstallation | null>
   chooseExecutable(id: FeatureId): Promise<string | null>
@@ -86,6 +107,12 @@ export interface WideApi {
   modelDelete(target: ModelTarget): Promise<void>
   modelReorder(order: ModelOrder): Promise<void>
   modelBatch(change: ModelBatchChange): Promise<ModelBatchResult>
+  mcpsInventory(): Promise<McpsInventory>
+  mcpsRefresh(harness: McpHarnessId): Promise<McpSource>
+  mcpDetail(target: McpTarget): Promise<McpFields>
+  mcpPreview(harness: McpHarnessId): Promise<McpDocument>
+  mcpSave(change: McpChange): Promise<void>
+  mcpDelete(target: McpTarget): Promise<void>
   onBatchProgress(callback: (progress: BatchProgress) => void): () => void
   onNotice(callback: (result: JobResult) => void): () => void
   onWindowMaximized(callback: (maximized: boolean) => void): () => void

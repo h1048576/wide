@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Copy, Eye, FileText, RefreshCw, Trash2, X } from 'lucide-react'
-import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessInventory, type HarnessOperationResult } from '../../shared/types'
+import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessInventory, type HarnessOperationResult, type HarnessSettings } from '../../shared/types'
 import ModelsSection from './ModelsSection'
+import McpsSection from './McpsSection'
 import HarnessSectionHeading, { HarnessExpandToggle } from './HarnessSectionHeading'
 import { displayHarnessPath } from './harnessPath'
 
@@ -11,7 +12,8 @@ const emptyInventory: HarnessInventory = {
   harnesses: HARNESSES.map(harness => ({ id: harness.id, name: harness.name, path: `~/${harness.directory}`, skillsPath: `~/${harness.directory}/skills`, exists: false, skills: [] }))
 }
 
-export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
+export default function HarnessPage({ settings, disabled, onBusyChange, onNotice }: {
+  settings: HarnessSettings
   disabled: boolean
   onBusyChange: (busy: boolean) => void
   onNotice: (text: string, error?: boolean) => void
@@ -21,7 +23,7 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
   const [loadError, setLoadError] = useState('')
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [skillsError, setSkillsError] = useState('')
-  const [skillsOpen, setSkillsOpen] = useState(true)
+  const [skillsOpen, setSkillsOpen] = useState(!settings.skillsCollapsed)
   const [expanded, setExpanded] = useState<Partial<Record<HarnessId, boolean>>>({})
   const [operation, setOperation] = useState<string | null>(null)
   const [document, setDocument] = useState<HarnessDocument | null>(null)
@@ -142,7 +144,8 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
       </div>{harness.error && <p className="field-error detection-error" role="alert">{harness.error}</p>}
     </section>)}
     </div>
-    <ModelsSection disabled={locked} onBusyChange={onBusyChange} />
+    <ModelsSection defaultCollapsed={settings.modelsCollapsed} disabled={locked} onBusyChange={onBusyChange} />
+    <McpsSection defaultCollapsed={settings.mcpsCollapsed} disabled={locked} onBusyChange={onBusyChange} />
     {result && <div className={`harness-result ${result.success ? 'success' : 'error'}`} role="status">{result.success ? <Check size={16} /> : <CircleAlert size={16} />}<span>{result.message}</span></div>}
     {document && <div className="harness-preview-backdrop" onClick={event => { if (event.target === event.currentTarget) { setDocument(null); previewButton.current?.focus() } }}><section className="harness-preview" role="dialog" aria-modal="true" aria-labelledby="harness-preview-title" aria-describedby="harness-preview-path"><header><div><h2 id="harness-preview-title">AGENTS.md 预览</h2><p id="harness-preview-path">{displayHarnessPath(document.path)}</p></div><button ref={closePreview} className="icon-button" aria-label="关闭预览" onClick={() => { setDocument(null); previewButton.current?.focus() }}><X size={18} /></button></header><pre>{document.content || '（空文件）'}</pre></section></div>}
   </div>

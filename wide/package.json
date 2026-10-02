@@ -1,6 +1,6 @@
 {
   "name": "wide",
-  "version": "0.2.47",
+  "version": "0.2.50",
   "description": "AI 桌面应用的界面调整工具",
   "private": true,
   "main": "out/main/index.js",
@@ -22,6 +22,8 @@
     "lucide-react": "^0.577.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "smol-toml": "^1.9.0",
+    "toml-eslint-parser": "^1.0.3",
     "ws": "^8.22.0",
     "yaml": "^2.9.1"
   },

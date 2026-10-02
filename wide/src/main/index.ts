@@ -6,8 +6,9 @@ import { Store } from './store'
 import { runAllApplications } from './application-batch'
 import { HarnessManager } from './harness'
 import { ModelsManager } from './models'
+import { McpsManager } from './mcps'
 import { StartupManager } from './startup'
-import { APPLICATIONS, parseAppearance, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type OperationLevel, type Theme } from '../shared/types'
+import { APPLICATIONS, parseAppearance, parseHarnessSettings, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type OperationLevel, type Theme } from '../shared/types'
 
 let window: BrowserWindow | null = null
 let busy = false
@@ -17,6 +18,10 @@ const store = new Store()
 const startup = new StartupManager()
 const harness = new HarnessManager()
 const models = new ModelsManager(undefined, join(app.getPath('userData'), 'model-backups'))
+const mcps = new McpsManager(undefined, join(app.getPath('userData'), 'mcp-backups'), {
+  ...(process.env.CLAUDE_CONFIG_DIR ? { claude: join(process.env.CLAUDE_CONFIG_DIR, '.claude.json') } : {}),
+  ...(process.env.CODEX_HOME ? { codex: join(process.env.CODEX_HOME, 'config.toml') } : {})
+})
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 const rendererFile = join(__dirname, '../renderer/index.html')
 const rendererUrl = isDev ? process.env.ELECTRON_RENDERER_URL! : pathToFileURL(rendererFile).href
@@ -48,6 +53,12 @@ function registerIPC() {
   handle('wide:model-delete', (target: unknown) => harnessMutation(() => models.delete(target)))
   handle('wide:model-reorder', (order: unknown) => harnessMutation(() => models.reorder(order)))
   handle('wide:model-batch', (change: unknown) => harnessMutation(() => models.batch(change)))
+  handle('wide:mcps-inventory', () => mcps.inventory())
+  handle('wide:mcps-refresh', (id: unknown) => mcps.source(id))
+  handle('wide:mcp-detail', (target: unknown) => mcps.detail(target))
+  handle('wide:mcp-preview', (id: unknown) => mcps.preview(id))
+  handle('wide:mcp-save', (change: unknown) => harnessMutation(() => mcps.save(change)))
+  handle('wide:mcp-delete', (target: unknown) => harnessMutation(() => mcps.delete(target)))
   handle('wide:save', async (feature: unknown, input: unknown) => {
     const id = parseFeatureId(feature)
     const settings = parseSettings(input, id)
@@ -63,6 +74,11 @@ function registerIPC() {
     const appearance = parseAppearance(input)
     await store.update(current => ({ ...current, appearance }))
     return appearance
+  })
+  handle('wide:harness-settings', async (input: unknown) => {
+    const harness = parseHarnessSettings(input)
+    await store.update(current => ({ ...current, harness }))
+    return harness
   })
   handle('wide:startup-mode', async (input: unknown) => {
     const startupMode = parseStartupMode(input)

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { ChevronDown, ChevronsDownUp, ChevronsUpDown } from 'lucide-react'
 
 export function HarnessExpandToggle({ title, expanded, onToggle, disabled = false }: {
-  title: 'Skills' | 'Models'
+  title: 'Skills' | 'Models' | 'MCPs'
   expanded: boolean
   onToggle: () => void
   disabled?: boolean
@@ -12,7 +12,7 @@ export function HarnessExpandToggle({ title, expanded, onToggle, disabled = fals
 }
 
 export default function HarnessSectionHeading({ title, expanded, contentId, onToggle, disabled = false, children }: {
-  title: 'Skills' | 'Models'
+  title: 'Skills' | 'Models' | 'MCPs'
   expanded: boolean
   contentId: string
   onToggle: () => void

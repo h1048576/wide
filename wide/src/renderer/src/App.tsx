@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical, LogOut, Maximize2, Minus, Monitor, PanelLeft, Play, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal, X } from 'lucide-react'
-import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
+import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
 import codexIcon from './assets/icons/codex.png'
 import droidIcon from './assets/icons/droid.svg'
 import paseoIcon from './assets/icons/paseo.png'
@@ -13,7 +13,7 @@ import { ModelDialog } from './ModelDialog'
 
 type MenuId = FeatureId | 'settings' | 'start' | 'harness'
 type BusyOperation = { id: FeatureId; action: 'apply' | 'normal' | 'exit' } | { id: 'all'; action: BatchAction } | { id: 'harness'; action: 'manage' }
-type SaveDomain = FeatureId | 'appearance' | 'theme' | 'menuOrder' | 'startupMode' | 'openAtLogin'
+type SaveDomain = FeatureId | 'appearance' | 'harness' | 'theme' | 'menuOrder' | 'startupMode' | 'openAtLogin'
 type RestoreConfirmation = { action: 'presets' | 'normal'; target: FeatureId | 'settings'; returnFocus: HTMLElement | null }
 type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean }
 const detectionKey = (id: FeatureId, settings: DroidSettings) => JSON.stringify([id, settings.executablePath])
@@ -84,6 +84,8 @@ export default function App() {
   const settings = applications[applicationId]
   function setSettings(value: DroidSettings) { setApplications(current => ({ ...current, [applicationId]: value })) }
   const [appearance, setAppearance] = useState<AppearanceSettings>({ ...DEFAULT_APPEARANCE })
+  const [harnessSettings, setHarnessSettings] = useState<HarnessSettings>({ ...DEFAULT_HARNESS_SETTINGS })
+  const currentHarnessSettings = useRef(harnessSettings)
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState<BusyOperation | null>(null)
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null)
@@ -99,7 +101,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.47')
+  const [version, setVersion] = useState('0.2.49')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -116,7 +118,7 @@ export default function App() {
   const menuRef = useRef<HTMLElement>(null)
   const menuDrag = useRef<{ id: FeatureId; pointerId: number; startX: number; startY: number; left: number; top: number; width: number; active: boolean } | null>(null)
   const dragClickBlocked = useRef(false)
-  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, theme: 0, menuOrder: 0, startupMode: 0, openAtLogin: 0 })
+  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, harness: 0, theme: 0, menuOrder: 0, startupMode: 0, openAtLogin: 0 })
   const saveErrorsRef = useRef<Partial<Record<SaveDomain, string>>>({})
   const desktop = !!window.wide
   const isAppSettings = active === 'settings'
@@ -133,7 +135,7 @@ export default function App() {
   const dark = theme === 'dark' || theme === 'system' && systemDark
   const visibleFeatures = menuOrder.map(id => FEATURES.find(item => item.id === id)!).filter(item => collapsed || item.name.toLowerCase().includes(query.toLowerCase()))
   const visibleStart = collapsed || '全局 开始 启动所有 退出所有'.includes(query.trim().toLowerCase())
-  const visibleHarness = collapsed || '全局 harness agents.md claude skills 技能 配置'.includes(query.trim().toLowerCase())
+  const visibleHarness = collapsed || '全局 harness agents.md claude skills models mcps 技能 模型 配置'.includes(query.trim().toLowerCase())
   const draggedFeature = FEATURES.find(item => item.id === dragging)
 
   useEffect(() => {
@@ -173,6 +175,7 @@ export default function App() {
         const order = normalizeMenuOrder(data.preferences.menuOrder)
         currentMenuOrder.current = order; setMenuOrder(order)
         setApplications(data.preferences.applications); setAppearance(data.preferences.appearance); setTheme(data.preferences.theme)
+        currentHarnessSettings.current = data.preferences.harness ?? { ...DEFAULT_HARNESS_SETTINGS }; setHarnessSettings(currentHarnessSettings.current)
         setStartupMode(data.preferences.startupMode)
         setOpenAtLogin(data.openAtLogin); setStartupAvailable(data.startupAvailable)
         setPlatform(data.platform); setVersion(data.version); setWindowMaximized(data.windowMaximized); setConfigWarning(data.configWarning || ''); setReady(true)
@@ -241,6 +244,11 @@ export default function App() {
   function changeTheme(next: Theme) {
     setTheme(next)
     if (window.wide) persist('theme', () => window.wide!.setTheme(next))
+  }
+  function changeHarnessSetting(key: keyof HarnessSettings, value: boolean) {
+    const next = { ...currentHarnessSettings.current, [key]: value }
+    currentHarnessSettings.current = next; setHarnessSettings(next)
+    if (window.wide) persist('harness', () => window.wide!.setHarnessSettings(next))
   }
   function changeStartupMode(next: StartupMode) {
     setStartupMode(next)
@@ -375,6 +383,8 @@ export default function App() {
     if (window.wide) persist('appearance', () => window.wide!.setAppearance(next))
     changeTheme('system')
     changeStartupMode('default')
+    currentHarnessSettings.current = { ...DEFAULT_HARNESS_SETTINGS }; setHarnessSettings(currentHarnessSettings.current)
+    if (window.wide) persist('harness', () => window.wide!.setHarnessSettings({ ...DEFAULT_HARNESS_SETTINGS }))
     if (startupAvailable) changeOpenAtLogin(false)
   }
   function askRestore(action: RestoreConfirmation['action']) {
@@ -451,7 +461,7 @@ export default function App() {
               return <div className={`batch-result setting-row ${result.status}`} key={result.id}><div className="batch-app-name"><ResultIcon size={20} /><span>{APPLICATIONS[result.id].name}</span></div><span className="batch-result-message">{result.message}</span></div>
             })}</div>}
           </section>}
-        </div> : isHarness ? <HarnessPage disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
+        </div> : isHarness ? <HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
           <section className="settings-group" aria-label="内容布局"><h2>布局</h2><div className="settings-list">
             <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateApplication('width', value)} />
             {capability.maxWidth && <DimensionControl id="maxWidth" label="最大宽度" value={settings.maxWidth} fallback={defaults.maxWidth} disabled={disabled} error={errors.maxWidth} onChange={value => updateApplication('maxWidth', value)} />}
@@ -481,6 +491,11 @@ export default function App() {
             <SettingRow label="字号" htmlFor="app-fontSize" error={appErrors.fontSize}><PixelControl id="app-fontSize" min="10" max="24" value={appearance.fontSize} disabled={!ready || !!bootError} aria-invalid={!!appErrors.fontSize} aria-describedby={appErrors.fontSize ? 'app-fontSize-error' : undefined} onChange={event => updateAppearance('fontSize', Number(event.target.value))} /></SettingRow>
             <SettingRow label="模式" htmlFor="app-mode" error={appErrors.mode}><SelectControl id="app-mode" label="应用模式" value={appearance.mode} disabled={!ready || !!bootError} onChange={value => updateAppearance('mode', value as AppearanceMode)} options={[{ value: 'normal', label: '正常' }, { value: 'compact', label: '紧凑' }]} /></SettingRow>
           </div></section>
+          <section className="settings-group" aria-label="Harness 设置"><h2>Harness</h2><div className="settings-list">
+            <SettingRow label="Skills 折叠"><Switch label="Skills 折叠" checked={harnessSettings.skillsCollapsed} disabled={disabled} onChange={value => changeHarnessSetting('skillsCollapsed', value)} /></SettingRow>
+            <SettingRow label="Models 折叠"><Switch label="Models 折叠" checked={harnessSettings.modelsCollapsed} disabled={disabled} onChange={value => changeHarnessSetting('modelsCollapsed', value)} /></SettingRow>
+            <SettingRow label="MCPs 折叠"><Switch label="MCPs 折叠" checked={harnessSettings.mcpsCollapsed} disabled={disabled} onChange={value => changeHarnessSetting('mcpsCollapsed', value)} /></SettingRow>
+          </div></section>
           <section className="settings-group" aria-label="应用启动"><h2>启动</h2><div className="settings-list">
             <SettingRow label="开机启动"><Switch label="开机启动" checked={openAtLogin} disabled={disabled || !desktop || !startupAvailable || startupSaving} onChange={changeOpenAtLogin} /></SettingRow>
             <SettingRow label="启动方式" htmlFor="app-startupMode"><SelectControl id="app-startupMode" label="应用启动方式" value={startupMode} disabled={!ready || !!bootError} onChange={value => changeStartupMode(value as StartupMode)} options={[{ value: 'default', label: '默认' }, { value: 'maximized', label: '最大化' }]} /></SettingRow>
@@ -491,7 +506,7 @@ export default function App() {
     </div>
     {draggedFeature && dragPreview && <div className="feature-item menu-drag-preview" aria-hidden="true" style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.width }}><draggedFeature.icon size={20} />{!collapsed && <span>{draggedFeature.name}</span>}</div>}
     {restoreConfirmation && <ModelDialog title={restoreConfirmation.action === 'normal' ? '恢复默认界面' : '恢复预设值'} subtitle={restoreConfirmation.target === 'settings' ? 'wide 设置' : APPLICATIONS[restoreConfirmation.target].name} disabled={disabled} returnFocus={restoreConfirmation.returnFocus} onCancel={dismissRestore} closeLabel="关闭确认弹窗" descriptionId="restore-confirmation-message" className="restore-confirmation-dialog">
-      <p id="restore-confirmation-message" className="restore-confirmation-message">{restoreConfirmation.action === 'normal' ? `将恢复 ${restoreTargetName} 的默认界面并重新启动应用，请先保存当前工作。是否继续？` : restoreConfirmation.target === 'settings' ? '将把 wide 的主题、字体、字号、模式、开机启动和启动方式恢复为预设值。是否继续？' : `将把 ${restoreTargetName} 的设置恢复为预设值。是否继续？`}</p>
+      <p id="restore-confirmation-message" className="restore-confirmation-message">{restoreConfirmation.action === 'normal' ? `将恢复 ${restoreTargetName} 的默认界面并重新启动应用，请先保存当前工作。是否继续？` : restoreConfirmation.target === 'settings' ? '将把 wide 的主题、字体、字号、模式、Harness 折叠、开机启动和启动方式恢复为预设值。是否继续？' : `将把 ${restoreTargetName} 的设置恢复为预设值。是否继续？`}</p>
       <div className="harness-actions model-editor-actions"><button className="button secondary" type="button" data-dialog-initial-focus="true" disabled={disabled} onClick={dismissRestore}>取消</button><button className="button primary" type="button" disabled={disabled} onClick={confirmRestore}>确定</button></div>
     </ModelDialog>}
     {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.error ? <CircleAlert size={18} /> : <Check size={18} />}<span>{notice.text}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
