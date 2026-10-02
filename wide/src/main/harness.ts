@@ -29,7 +29,11 @@ export class HarnessManager {
   async inventory(): Promise<HarnessInventory> {
     const sourcePath = this.sourcePath()
     const source = await stat(sourcePath).catch(() => null)
-    const harnesses = await Promise.all(HARNESSES.map(async item => {
+    return { agentsSource: { path: sourcePath, exists: !!source?.isFile() }, harnesses: await this.skillsInventory() }
+  }
+
+  async skillsInventory(): Promise<HarnessFolder[]> {
+    return Promise.all(HARNESSES.map(async item => {
       const folder = this.folder(item.id)
       const result: HarnessFolder = { id: item.id, name: item.name, path: folder.path, skillsPath: folder.skillsPath, exists: false, skills: [] }
       try {
@@ -38,7 +42,6 @@ export class HarnessManager {
       } catch (error) { result.error = errorMessage(error) }
       return result
     }))
-    return { agentsSource: { path: sourcePath, exists: !!source?.isFile() }, harnesses }
   }
 
   private async readAgents(): Promise<Buffer> {

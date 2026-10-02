@@ -43,7 +43,7 @@ export interface HarnessFolder { id: HarnessId; name: string; path: string; skil
 export interface HarnessInventory { agentsSource: { path: string; exists: boolean }; harnesses: HarnessFolder[] }
 export interface HarnessDocument { path: string; content: string }
 export interface HarnessOperationResult extends JobResult { completed: number; failed: number }
-export type ModelHarnessId = 'claude' | 'droid' | 'dsh'
+export type ModelHarnessId = 'claude' | 'droid' | 'dsh' | 'pi' | 'opencode'
 export interface CustomModel { index: number; model: string; name: string; revision: string }
 export interface ModelSource { id: string; harness: ModelHarnessId; path: string; label: string; models: CustomModel[]; editable: boolean; baseUrl?: string; error?: string }
 export interface ModelsInventory { sources: ModelSource[] }
@@ -56,6 +56,8 @@ export interface ModelDetail { fields: ModelFields; apiKey?: string }
 export interface ModelChange { sourceId: string; target?: ModelTarget; copyFrom?: ModelTarget; fields: ModelFields; apiKey?: string }
 export interface ModelDocument { paths: string[]; content: string }
 export interface ModelOrder { sourceId: string; models: ModelTarget[] }
+export interface ModelBatchChange { action: 'replace' | 'add'; model: string; originalModel?: string }
+export interface ModelBatchResult { changed: number; skipped: number; harnesses: ModelHarnessId[] }
 export const DEFAULT_MODEL_BASE_URL = 'http://127.0.0.1:20128'
 export interface Bootstrap { preferences: Preferences; platform: string; version: string; windowMaximized: boolean; configWarning?: string }
 export interface WideApi {
@@ -71,6 +73,7 @@ export interface WideApi {
   quit(id: FeatureId, path: string): Promise<JobResult>
   runAll(action: BatchAction): Promise<BatchResult>
   harnessInventory(): Promise<HarnessInventory>
+  harnessSkillsInventory(): Promise<HarnessFolder[]>
   harnessPreviewAgents(): Promise<HarnessDocument>
   harnessSyncAgents(): Promise<HarnessOperationResult>
   harnessSyncSkills(source: 'claude' | 'agents', skillId?: string): Promise<HarnessOperationResult>
@@ -81,6 +84,7 @@ export interface WideApi {
   modelSave(change: ModelChange): Promise<void>
   modelDelete(target: ModelTarget): Promise<void>
   modelReorder(order: ModelOrder): Promise<void>
+  modelBatch(change: ModelBatchChange): Promise<ModelBatchResult>
   onBatchProgress(callback: (progress: BatchProgress) => void): () => void
   onNotice(callback: (result: JobResult) => void): () => void
   onWindowMaximized(callback: (maximized: boolean) => void): () => void

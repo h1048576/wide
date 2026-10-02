@@ -4,14 +4,27 @@ import { homedir } from 'node:os'
 import { createHash, randomUUID } from 'node:crypto'
 import { applyEdits, modify, parse, type ParseError } from 'jsonc-parser'
 import { parseDocument, isNode, isSeq } from 'yaml'
-import { DEFAULT_MODEL_BASE_URL, type ModelChange, type ModelDetail, type ModelDocument, type ModelFields, type ModelOrder, type ModelsInventory, type ModelSource, type ModelTarget } from '../shared/types'
+import { DEFAULT_MODEL_BASE_URL, type ModelBatchChange, type ModelBatchResult, type ModelChange, type ModelDetail, type ModelDocument, type ModelFields, type ModelOrder, type ModelsInventory, type ModelSource, type ModelTarget } from '../shared/types'
 
-type ObjectValue = Record<string, any>
+const mapModelId = Symbol('opencode model ID')
+type ObjectValue = Record<string, any> & { [mapModelId]?: string }
 type SourceConfig = { id: string; harness: ModelSource['harness']; path: string; label: string; provider?: string }
+type FileChange = { source: SourceConfig; file: Awaited<ReturnType<ModelsManager['load']>>; entries: ObjectValue[]; index?: number; deleting?: boolean; order?: number[]; baseUrl?: string; replace?: boolean }
 const object = (value: unknown): value is ObjectValue => !!value && typeof value === 'object' && !Array.isArray(value)
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
-const entryRevision = (value: unknown) => hash(JSON.stringify(value))
+const entryRevision = (value: ObjectValue) => hash(JSON.stringify([value[mapModelId], value]))
+// 固定为当前配置的字段顺序；未知字段接在其后，并保留原顺序。
+const modelKeyOrder: Record<ModelSource['harness'], string[]> = {
+  claude: ['model', 'label', 'description'],
+  droid: ['model', 'id', 'baseUrl', 'apiKey', 'provider', 'displayName'],
+  dsh: ['id', 'name', 'reasoningEfforts'],
+  pi: ['id', 'name', 'reasoning', 'contextWindow'],
+  opencode: ['name']
+}
+const modelId = (harness: ModelSource['harness'], item: ObjectValue) => String(harness === 'opencode' ? item[mapModelId] : harness === 'dsh' || harness === 'pi' ? item.id ?? '' : item.model ?? '')
+const modelName = (id: string) => id.split('/').at(-1)!.replace(/\[1m\]/gi, '').trim()
+const plainModelId = (id: string) => id.replace(/\[1m\]/gi, '')
 
 export class ModelsManager {
   private mutating = false
@@ -57,13 +70,17 @@ export class ModelsManager {
 
   private async sources(): Promise<SourceConfig[]> {
     const json = await Promise.all([this.jsonSource('claude'), this.jsonSource('droid')])
+    const extra: SourceConfig[] = [
+      { id: 'pi', harness: 'pi', path: join(this.home, '.pi', 'agent', 'models.json'), label: 'proxy', provider: 'proxy' },
+      { id: 'opencode', harness: 'opencode', path: join(this.home, '.config', 'opencode', 'opencode.json'), label: 'proxy', provider: 'proxy' }
+    ]
     const path = this.dshPath('desktop')
     try {
       const { providers } = this.yaml((await this.read(path)).text)
       const names = Object.keys(providers).filter(key => object(providers[key]))
       if (!names.length) throw new Error('尚未配置模型提供商')
-      return [...json, ...names.map(provider => ({ id: `dsh:${provider}`, harness: 'dsh' as const, path, label: provider, provider }))]
-    } catch { return [...json, { id: 'dsh', harness: 'dsh', path, label: 'dsh' }] }
+      return [...json, ...names.map(provider => ({ id: `dsh:${provider}`, harness: 'dsh' as const, path, label: provider, provider })), ...extra]
+    } catch { return [...json, { id: 'dsh', harness: 'dsh', path, label: 'dsh' }, ...extra] }
   }
 
   private dshPath(profile: 'desktop' | 'web') { return join(this.home, '.dsh', 'profiles', profile, 'cordis.patch.yml') }
@@ -76,7 +93,11 @@ export class ModelsManager {
   }
 
   private async load(source: SourceConfig) {
-    const file = await this.read(source.path, source.harness !== 'dsh')
+    const file = await this.read(source.path, source.harness === 'claude' || source.harness === 'droid')
+    return this.parseFile(source, file)
+  }
+
+  private parseFile(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['read']>>) {
     if (source.harness === 'dsh') {
       const yaml = this.yaml(file.text)
       if (!source.provider || !object(yaml.providers[source.provider])) throw new Error('尚未配置模型提供商')
@@ -87,6 +108,16 @@ export class ModelsManager {
       return { ...file, entries: entries as ObjectValue[], location: [yaml.index, 'config', 'providers', source.provider, 'models'], yaml, baseUrl: typeof provider.baseURL === 'string' ? provider.baseURL : DEFAULT_MODEL_BASE_URL }
     }
     const json = this.json(file.text)
+    if (source.harness === 'pi' || source.harness === 'opencode') {
+      const location = source.harness === 'pi' ? ['providers', 'proxy', 'models'] : ['provider', 'proxy', 'models']
+      const provider = source.harness === 'pi' ? json.providers?.proxy : json.provider?.proxy
+      if (!object(provider)) throw new Error('尚未配置 proxy 模型提供商')
+      const models = provider.models ?? (source.harness === 'pi' ? [] : {})
+      if (source.harness === 'pi' && (!Array.isArray(models) || models.some(item => !object(item)))) throw new Error('pi models 须为模型对象列表')
+      if (source.harness === 'opencode' && (!object(models) || Object.values(models).some(item => !object(item)))) throw new Error('opencode models 须为以模型 ID 为键的对象')
+      const entries: ObjectValue[] = source.harness === 'pi' ? models : Object.entries(models).map(([id, value]) => ({ ...(value as ObjectValue), [mapModelId]: id }))
+      return { ...file, entries, location, yaml: undefined, baseUrl: source.harness === 'pi' ? provider.baseUrl ?? DEFAULT_MODEL_BASE_URL : provider.options?.baseURL ?? DEFAULT_MODEL_BASE_URL }
+    }
     if (source.harness === 'claude' && json.modelPicker !== undefined && !object(json.modelPicker)) throw new Error('modelPicker 须为对象')
     const entries = source.harness === 'claude' ? json.modelPicker?.options ?? [] : json.customModels ?? []
     if (!Array.isArray(entries) || entries.some(item => !object(item))) throw new Error('自定义模型配置须为模型对象列表')
@@ -99,7 +130,7 @@ export class ModelsManager {
       try {
         const { entries, baseUrl } = await this.load(source)
         if (source.harness === 'dsh') await this.load({ ...source, path: this.dshPath('web') })
-        return { ...source, baseUrl, editable: true, models: entries.map((item, index) => ({ index, model: String(source.harness === 'dsh' ? item.id ?? '' : item.model ?? ''), name: String(item.label ?? item.displayName ?? item.name ?? item.model ?? item.id ?? '未命名模型'), revision: entryRevision(item) })) }
+        return { ...source, baseUrl, editable: true, models: entries.map((item, index) => ({ index, model: modelId(source.harness, item), name: String(item.label ?? item.displayName ?? item.name ?? modelId(source.harness, item) ?? '未命名模型'), revision: entryRevision(item) })) }
       } catch (error) {
         return { ...source, editable: false, models: [], error: missing(error) ? '未找到配置文件' : error instanceof Error ? error.message : '读取模型失败' }
       }
@@ -122,9 +153,10 @@ export class ModelsManager {
     const source = await this.source(target.sourceId)
     const file = await this.load(source)
     const item = this.entry(file.entries, target)
-    const fields: ModelFields = { model: String(source.harness === 'dsh' ? item.id ?? '' : item.model ?? ''), name: String(item.label ?? item.displayName ?? item.name ?? ''), description: item.description }
+    const fields: ModelFields = { model: modelId(source.harness, item), name: String(item.label ?? item.displayName ?? item.name ?? ''), description: item.description }
     if (source.harness === 'droid') Object.assign(fields, { baseUrl: item.baseUrl ?? DEFAULT_MODEL_BASE_URL, provider: item.provider })
     if (source.harness === 'dsh') Object.assign(fields, { baseUrl: file.baseUrl, reasoningEfforts: item.reasoningEfforts })
+    if (source.harness === 'pi' || source.harness === 'opencode') fields.baseUrl = file.baseUrl
     return { fields, ...(source.harness === 'droid' ? { apiKey: typeof item.apiKey === 'string' ? item.apiKey : '' } : {}) }
   }
 
@@ -132,7 +164,13 @@ export class ModelsManager {
     const source = await this.source(id)
     const file = await this.load(source)
     const paths = source.harness === 'dsh' ? [source.path, this.dshPath('web')] : [source.path]
-    const value = source.harness === 'claude' ? { modelPicker: { options: file.entries } } : source.harness === 'droid' ? { customModels: file.entries } : { provider: source.provider, baseURL: file.baseUrl, models: file.entries }
+    if (file.yaml) {
+      // 预览完整模型插件，保留 YAML 层级、提供商顺序和注释。
+      const document = file.yaml.document.clone()
+      if (isSeq(document.contents)) document.contents.items = [document.contents.items[file.yaml.index]]
+      return { paths, content: document.toString({ lineWidth: 0 }) }
+    }
+    const value = source.harness === 'claude' ? { modelPicker: { options: file.entries } } : source.harness === 'droid' ? { customModels: file.entries } : source.harness === 'pi' ? { providers: { proxy: { models: file.entries } } } : { provider: { proxy: { models: Object.fromEntries(file.entries.map(item => [item[mapModelId]!, item])) } } }
     return { paths, content: JSON.stringify(value, null, 2) }
   }
 
@@ -149,13 +187,25 @@ export class ModelsManager {
       next.provider = fields.provider
       set('baseUrl', this.apiAddress(fields.baseUrl))
       if (apiKey !== undefined) { if (typeof apiKey !== 'string' || /[\0\r\n]/.test(apiKey)) throw new Error('API Key 无效'); set('apiKey', apiKey.trim()) }
-      // Factory 自带的索引和自定义 ID 保留；自动生成的 ID 随模型 ID 更新。
-      if (typeof old.id === 'string' && old.id === `custom:${old.model}`) next.id = `custom:${next.model}`
-    } else {
+      // 补齐新增或复制模型的 ID；已有自动生成的 ID 随模型 ID 更新。
+      if (typeof old.id !== 'string' || !old.id.trim() || old.id === `custom:${old.model}`) next.id = `custom:${next.model}`
+    } else if (harness === 'dsh' || harness === 'pi') {
       next.id = fields.model.trim(); set('name', fields.name.trim())
-      if (fields.reasoningEfforts !== undefined && fields.reasoningEfforts !== false && (!object(fields.reasoningEfforts) || Object.entries(fields.reasoningEfforts).some(([key, value]) => !key.trim() || ['__proto__', 'constructor', 'prototype'].includes(key) || value !== null && typeof value !== 'string'))) throw new Error('请填写有效的思考级别 key、value')
-      set('reasoningEfforts', fields.reasoningEfforts)
+      if (harness === 'dsh') {
+        if (fields.reasoningEfforts !== undefined && fields.reasoningEfforts !== false && (!object(fields.reasoningEfforts) || Object.entries(fields.reasoningEfforts).some(([key, value]) => !key.trim() || ['__proto__', 'constructor', 'prototype'].includes(key) || value !== null && typeof value !== 'string'))) throw new Error('请填写有效的思考级别 key、value')
+        set('reasoningEfforts', fields.reasoningEfforts)
+      }
+    } else {
+      next[mapModelId] = fields.model.trim(); set('name', fields.name.trim())
+      if (typeof old.id === 'string' && old.id === old[mapModelId]) next.id = next[mapModelId]
     }
+    return next
+  }
+
+  private ordered(harness: SourceConfig['harness'], item: ObjectValue) {
+    const keys = [...new Set([...modelKeyOrder[harness], ...Object.keys(item)])]
+    const next = Object.fromEntries(keys.filter(key => Object.hasOwn(item, key)).map(key => [key, item[key]])) as ObjectValue
+    if (item[mapModelId] !== undefined) next[mapModelId] = item[mapModelId]
     return next
   }
 
@@ -165,10 +215,10 @@ export class ModelsManager {
     return input.trim()
   }
 
-  private async exclusive(task: () => Promise<void>) {
+  private async exclusive<T>(task: () => Promise<T>): Promise<T> {
     if (this.mutating) throw new Error('正在写入模型配置，请稍后再试')
     this.mutating = true
-    try { await task() } finally { this.mutating = false }
+    try { return await task() } finally { this.mutating = false }
   }
 
   async save(input: unknown) {
@@ -180,15 +230,15 @@ export class ModelsManager {
       const target = change.target === undefined ? undefined : this.target(change.target)
       const copyFrom = change.copyFrom === undefined ? undefined : this.target(change.copyFrom)
       if (target && copyFrom || [target, copyFrom].some(item => item && item.sourceId !== source.id)) throw new Error('模型所属配置无效')
-      const old = target || copyFrom ? { ...this.entry(file.entries, (target ?? copyFrom)!) } : {}
+      const old = target || copyFrom ? { ...this.entry(file.entries, (target ?? copyFrom)!) } : source.harness === 'pi' || source.harness === 'opencode' ? { ...file.entries.at(-1) } : {}
       if (copyFrom && source.harness === 'droid') { delete old.index; delete old.id }
-      const next = this.model(source.harness, change.fields, old, change.apiKey)
-      const key = source.harness === 'dsh' ? 'id' : 'model'
-      if (file.entries.some((item, index) => index !== target?.index && item[key] === next[key])) throw new Error('此配置中已存在相同的模型 ID')
+      const model = this.model(source.harness, change.fields, old, change.apiKey)
+      const next = this.ordered(source.harness, model)
+      if (file.entries.some((item, index) => index !== target?.index && modelId(source.harness, item) === modelId(source.harness, next))) throw new Error('此配置中已存在相同的模型 ID')
       const entries = [...file.entries]
       if (target) entries[target.index] = next
       else entries.push(next)
-      await this.commit(source, file, entries, target?.index, false, undefined, source.harness === 'dsh' ? this.apiAddress(change.fields.baseUrl) : undefined)
+      await this.commit(source, file, entries, target?.index, false, undefined, source.harness === 'dsh' || source.harness === 'pi' || source.harness === 'opencode' ? this.apiAddress(change.fields.baseUrl) : undefined)
     })
   }
 
@@ -217,15 +267,85 @@ export class ModelsManager {
     })
   }
 
-  private async commit(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['load']>>, entries: ObjectValue[], index?: number, deleting = false, order?: number[], baseUrl?: string) {
-    const files = [{ source, file, replace: false }]
+  async batch(input: unknown): Promise<ModelBatchResult> {
+    if (!object(input) || !['replace', 'add'].includes(input.action)) throw new Error('批量模型参数无效')
+    const change = input as ModelBatchChange
+    const validId = (value: unknown): value is string => typeof value === 'string' && !!plainModelId(value.trim()) && value.length <= 1024 && !/[\0\r\n]/.test(value)
+    if (!validId(change.model) || change.action === 'replace' && !validId(change.originalModel)) throw new Error('请输入有效的模型 ID')
+    const requested = plainModelId(change.model.trim())
+    const original = change.originalModel ? plainModelId(change.originalModel.trim()) : ''
+    if (change.action === 'replace' && requested === original) throw new Error('原模型与新模型不能相同')
+    return this.exclusive(async () => {
+      const changes: FileChange[] = []
+      const harnesses = new Set<ModelSource['harness']>()
+      let changed = 0, skipped = 0
+      for (const source of await this.sources()) {
+        let file: Awaited<ReturnType<ModelsManager['load']>>
+        try { file = await this.load(source) } catch (error) { throw new Error(`${source.harness}：${missing(error) ? '未找到配置文件' : error instanceof Error ? error.message : '读取配置失败'}`) }
+        const matched = change.action === 'replace' ? file.entries.map((item, index) => plainModelId(modelId(source.harness, item)) === original ? index : -1).filter(index => index >= 0) : []
+        const alreadyExists = file.entries.some(item => plainModelId(modelId(source.harness, item)) === requested)
+        if (change.action === 'add' && alreadyExists || change.action === 'replace' && !matched.length) { skipped++; continue }
+        if (change.action === 'replace' && alreadyExists) throw new Error(`${source.harness} 已存在新模型，无法替换；本次未写入配置`)
+        const entries = [...file.entries]
+        const retarget = (item: ObjectValue) => {
+          const oldId = modelId(source.harness, item)
+          const nextId = source.harness === 'claude' && /\[1m\]/i.test(oldId) ? `${requested}[1m]` : requested
+          const name = modelName(nextId)
+          const previousName = String(item.label ?? item.displayName ?? item.name ?? modelName(oldId))
+          const replacements = new Map<string, string>([[oldId, nextId], [previousName, name]])
+          const pattern = [...replacements.keys()].filter(Boolean).sort((a, b) => b.length - a.length).map(key => key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+          const description = typeof item.description === 'string' && pattern ? item.description.replace(new RegExp(pattern, 'g'), match => replacements.get(match)!) : item.description
+          const old = { ...item }
+          if (source.harness === 'droid') { old.id = `custom:${old.model}`; if (change.action === 'add') delete old.index }
+          if (source.harness === 'opencode' && typeof old.id === 'string') old.id = nextId
+          const fields: ModelFields = { model: nextId, name, description, provider: item.provider, baseUrl: item.baseUrl, reasoningEfforts: item.reasoningEfforts }
+          const next = this.model(source.harness, fields, old, undefined)
+          return this.ordered(source.harness, next)
+        }
+        if (change.action === 'add') {
+          const last = file.entries.at(-1)
+          if (!last) throw new Error(`${source.harness} 没有可复制的最后一条模型配置；本次未写入配置`)
+          entries.push(retarget(last))
+          changes.push(...await this.prepare(source, file, entries))
+          changed++
+        } else {
+          for (const index of matched) entries[index] = retarget(file.entries[index])
+          for (const index of matched) changes.push(...await this.prepare(source, file, entries, index))
+          changed += matched.length
+        }
+        harnesses.add(source.harness)
+      }
+      if (change.action === 'replace' && !changed) throw new Error('未找到原模型，请检查完整模型 ID')
+      await this.commitAll(changes)
+      return { changed, skipped, harnesses: [...harnesses] }
+    })
+  }
+
+  private async prepare(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['load']>>, entries: ObjectValue[], index?: number, deleting = false, order?: number[], baseUrl?: string): Promise<FileChange[]> {
+    const changes: FileChange[] = [{ source, file, entries, index, deleting, order, baseUrl, replace: false }]
     if (source.harness === 'dsh') {
       const mirror = { ...source, path: this.dshPath('web') }
       const other = await this.load(mirror)
-      files.push({ source: mirror, file: other, replace: JSON.stringify(other.entries) !== JSON.stringify(file.entries) })
+      changes.push({ source: mirror, file: other, entries, index, deleting, order, baseUrl, replace: JSON.stringify(other.entries) !== JSON.stringify(file.entries) })
     }
-    const plans = files.map(item => ({ ...item, text: this.render(item.source, item.file, entries, index, deleting, order, baseUrl, item.replace) }))
-      .filter(item => item.text !== item.file.original)
+    return changes
+  }
+
+  private async commit(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['load']>>, entries: ObjectValue[], index?: number, deleting = false, order?: number[], baseUrl?: string) {
+    await this.commitAll(await this.prepare(source, file, entries, index, deleting, order, baseUrl))
+  }
+
+  private async commitAll(changes: FileChange[]) {
+    const grouped = new Map<string, { source: SourceConfig; file: FileChange['file']; text: string }>()
+    for (const change of changes) {
+      const previous = grouped.get(change.source.path)
+      if (previous && previous.file.original !== change.file.original) throw new Error('配置文件已被其他程序修改，本次未写入，请刷新后重试')
+      const current = previous ? this.parseFile(change.source, { ...previous.file, text: previous.text.replace(/^\uFEFF/, '') }) : change.file
+      const text = this.render(change.source, current, change.entries, change.index, change.deleting, change.order, change.baseUrl, change.replace)
+      grouped.set(change.source.path, { source: change.source, file: previous?.file ?? change.file, text })
+    }
+    const files = [...grouped.values()]
+    const plans = files.filter(item => item.text !== item.file.original)
     const staged: { path: string; temporary: string; original: string | null; mode?: number; written: boolean }[] = []
     try {
       for (const { source: config, file: original, text } of plans) {
@@ -240,7 +360,7 @@ export class ModelsManager {
           await writeFile(join(this.backups, `${config.id.replace(/[^a-z0-9-]/gi, '_')}${profile}-${Date.now()}-${randomUUID()}.${config.harness === 'dsh' ? 'yml' : 'json'}`), original.original, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
         }
       }
-      // 两份 DSH 配置都通过检查后再替换，未改写的文件也需通过外部变化检查。
+      // 所有配置通过检查并备份后再替换，失败时按相反顺序恢复。
       for (const item of files) {
         if ((await this.read(item.source.path, true)).original !== item.file.original) throw new Error('配置文件已被其他程序修改，本次未写入，请刷新后重试')
       }
@@ -296,10 +416,32 @@ export class ModelsManager {
       const indentation = file.text.match(/\n([ \t]+)\S/)?.[1] ?? '  '
       const formattingOptions = { insertSpaces: !indentation.includes('\t'), tabSize: indentation.length, eol }
       const root = this.json(file.text)
-      const hasArray = source.harness === 'claude' ? Array.isArray(root.modelPicker?.options) : Array.isArray(root.customModels)
-      const location = order || !hasArray ? file.location : [...file.location, index ?? file.entries.length]
-      const value = order || !hasArray ? entries : deleting ? undefined : index === undefined ? entries.at(-1) : entries[index]
-      text = applyEdits(file.text, modify(file.text, location, value, { formattingOptions, isArrayInsertion: !order && hasArray && index === undefined }))
+      if (source.harness === 'opencode') {
+        const renamed = index !== undefined && !deleting && file.entries[index][mapModelId] !== entries[index][mapModelId]
+        const replaceMap = !!order || renamed || !object(root.provider?.proxy?.models)
+        const item = index === undefined ? entries.at(-1)! : deleting ? file.entries[index] : entries[index]
+        const location = replaceMap ? file.location : [...file.location, item[mapModelId]!]
+        const value = replaceMap ? Object.fromEntries(entries.map(entry => [entry[mapModelId]!, entry])) : deleting ? undefined : item
+        text = applyEdits(file.text, modify(file.text, location, value, { formattingOptions }))
+      } else {
+        const hasArray = source.harness === 'claude' ? Array.isArray(root.modelPicker?.options) : source.harness === 'pi' ? Array.isArray(root.providers?.proxy?.models) : Array.isArray(root.customModels)
+        const location = order || !hasArray ? file.location : [...file.location, index ?? file.entries.length]
+        const value = order || !hasArray ? entries : deleting ? undefined : index === undefined ? entries.at(-1) : entries[index]
+        text = applyEdits(file.text, modify(file.text, location, value, { formattingOptions, isArrayInsertion: !order && hasArray && index === undefined }))
+      }
+      if (baseUrl !== undefined) {
+        const location = source.harness === 'pi' ? ['providers', 'proxy', 'baseUrl'] : ['provider', 'proxy', 'options', 'baseURL']
+        text = applyEdits(text, modify(text, location, baseUrl, { formattingOptions }))
+      }
+      // 每次 JSON 写入都规范模型字段，包括后补字段和此前保存的旧顺序。
+      // 逐个替换需要调整的模型，保留模型列表顺序及模型配置之外的内容。
+      const rendered = this.parseFile(source, { ...file, text })
+      for (const [position, item] of rendered.entries.entries()) {
+        const ordered = this.ordered(source.harness, item)
+        if (JSON.stringify(Object.keys(item)) === JSON.stringify(Object.keys(ordered))) continue
+        const location = [...rendered.location, source.harness === 'opencode' ? item[mapModelId]! : position]
+        text = applyEdits(text, modify(text, location, ordered, { formattingOptions }))
+      }
       this.json(text)
     }
     if (file.bom) text = `\uFEFF${text}`

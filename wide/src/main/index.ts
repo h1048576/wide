@@ -28,6 +28,7 @@ function registerIPC() {
   }
   handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), windowMaximized: window?.isMaximized() ?? false, configWarning: store.warning }))
   handle('wide:harness-inventory', () => harness.inventory())
+  handle('wide:harness-skills-inventory', () => harness.skillsInventory())
   handle('wide:harness-preview-agents', () => harness.previewAgents())
   const harnessMutation = async (task: () => Promise<unknown>) => {
     if (busy) throw new Error('操作正在执行，请稍后再试。')
@@ -43,6 +44,7 @@ function registerIPC() {
   handle('wide:model-save', (change: unknown) => harnessMutation(() => models.save(change)))
   handle('wide:model-delete', (target: unknown) => harnessMutation(() => models.delete(target)))
   handle('wide:model-reorder', (order: unknown) => harnessMutation(() => models.reorder(order)))
+  handle('wide:model-batch', (change: unknown) => harnessMutation(() => models.batch(change)))
   handle('wide:save', async (feature: unknown, input: unknown) => {
     const id = parseFeatureId(feature)
     const settings = parseSettings(input, id)

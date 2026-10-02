@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Copy, Eye, FileText, RefreshCw, Trash2, X } from 'lucide-react'
 import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessInventory, type HarnessOperationResult } from '../../shared/types'
 import ModelsSection from './ModelsSection'
+import HarnessSectionHeading from './HarnessSectionHeading'
+import { displayHarnessPath } from './harnessPath'
 
 const messageOf = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error)
 const emptyInventory: HarnessInventory = {
@@ -17,6 +19,9 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
   const [inventory, setInventory] = useState<HarnessInventory>(emptyInventory)
   const [loading, setLoading] = useState(!!window.wide)
   const [loadError, setLoadError] = useState('')
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [skillsError, setSkillsError] = useState('')
+  const [skillsOpen, setSkillsOpen] = useState(true)
   const [expanded, setExpanded] = useState<Partial<Record<HarnessId, boolean>>>({})
   const [operation, setOperation] = useState<string | null>(null)
   const [document, setDocument] = useState<HarnessDocument | null>(null)
@@ -24,23 +29,41 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
   const [result, setResult] = useState<HarnessOperationResult | null>(null)
   const mounted = useRef(true)
   const operationLock = useRef(false)
+  const disabledRef = useRef(disabled)
+  disabledRef.current = disabled
   const closePreview = useRef<HTMLButtonElement>(null)
   const previewButton = useRef<HTMLButtonElement>(null)
   const desktop = !!window.wide
-  const locked = disabled || loading || !!operation
+  const skillsBusy = loading || skillsLoading
+  const locked = disabled || skillsBusy || !!operation
 
   async function refresh() {
     if (!window.wide) return
     try {
       const next = await window.wide.harnessInventory()
-      if (mounted.current) { setInventory(next); setLoadError('') }
+      if (mounted.current) { setInventory(next); setLoadError(''); setSkillsError('') }
     } catch (error) { if (mounted.current) setLoadError(messageOf(error)) }
     finally { if (mounted.current) setLoading(false) }
   }
+  async function refreshSkills() {
+    if (!window.wide) return
+    setSkillsLoading(true)
+    try {
+      const harnesses = await window.wide.harnessSkillsInventory()
+      if (mounted.current) { setInventory(current => ({ ...current, harnesses })); setSkillsError('') }
+    } catch (error) { if (mounted.current) setSkillsError(messageOf(error)) }
+    finally { if (mounted.current) setSkillsLoading(false) }
+  }
+
+  function expandSkills(open: boolean) {
+    setExpanded(Object.fromEntries(HARNESSES.map(harness => [harness.id, open])))
+    if (open) setSkillsOpen(true)
+  }
+
   useEffect(() => {
     mounted.current = true
     void refresh()
-    const onFocus = () => { if (!operationLock.current) void refresh() }
+    const onFocus = () => { if (!operationLock.current && !disabledRef.current) void refresh() }
     window.addEventListener('focus', onFocus)
     return () => { mounted.current = false; window.removeEventListener('focus', onFocus) }
   }, [])
@@ -64,7 +87,7 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
     finally { if (mounted.current) setPreviewing(false) }
   }
 
-  async function run(key: string, action: () => Promise<HarnessOperationResult>, options: { quiet?: boolean } = {}) {
+  async function run(key: string, action: () => Promise<HarnessOperationResult>, options: { quiet?: boolean; scope?: 'skills' | 'all' } = {}) {
     if (operationLock.current || disabled) return
     operationLock.current = true
     setOperation(key); setResult(null); onBusyChange(true)
@@ -77,7 +100,7 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
       if (mounted.current) setResult({ success: false, completed: 0, failed: 1, message })
       if (!options.quiet) onNotice(message, true)
     } finally {
-      await refresh()
+      await (options.scope === 'all' ? refresh() : refreshSkills())
       operationLock.current = false
       if (mounted.current) setOperation(null)
       onBusyChange(false)
@@ -98,22 +121,27 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
   return <div className="settings-page harness-page">
     {loadError && <div className="error-banner" role="alert">读取 Harness 失败：{loadError}</div>}
     <section className="settings-group" aria-label="AGENTS.md 管理"><h2>指令</h2><div className="settings-list">
-      <div className="setting-row harness-document-row"><div className="setting-label"><span className="setting-name">AGENTS.md</span><span className="setting-description harness-path" title={inventory.agentsSource.path}>{inventory.agentsSource.path}</span></div><div className="harness-actions">
+      <div className="setting-row harness-document-row"><div className="setting-label"><span className="setting-name">AGENTS.md</span><span className="setting-description harness-path" title={displayHarnessPath(inventory.agentsSource.path)}>{displayHarnessPath(inventory.agentsSource.path)}</span></div><div className="harness-actions">
         <button ref={previewButton} className="button secondary" disabled={!desktop || locked || previewing || !inventory.agentsSource.exists} onClick={() => { void preview() }}>{previewing ? <RefreshCw size={14} className="spin" /> : <Eye size={14} />}预览</button>
-        <button className="button primary" disabled={!desktop || locked || !inventory.agentsSource.exists} onClick={() => { void run('agents', () => window.wide!.harnessSyncAgents()) }}>{operation === 'agents' ? <RefreshCw size={14} className="spin" /> : <Copy size={14} />}同步</button>
+        <button className="button primary" disabled={!desktop || locked || !inventory.agentsSource.exists} onClick={() => { void run('agents', () => window.wide!.harnessSyncAgents(), { scope: 'all' }) }}>{operation === 'agents' ? <RefreshCw size={14} className="spin" /> : <Copy size={14} />}同步</button>
       </div></div>
     </div><p className="operation-note">以 Claude 的 CLAUDE.md 为源文件，同步为 .factory、.codex、.agents、.dsh 下的 AGENTS.md。{desktop && !loading && !inventory.agentsSource.exists ? '源文件未找到。' : ''}</p></section>
-    <div className="harness-section-heading"><h2>Skills</h2><button className="icon-button" aria-label="刷新 Harness" title="刷新" disabled={!desktop || locked} onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button></div>
+    <HarnessSectionHeading title="Skills" expanded={skillsOpen} contentId="harness-skills-content" onToggle={() => setSkillsOpen(current => !current)} onExpandAll={() => expandSkills(true)} onCollapseAll={() => expandSkills(false)}>
+      <button className="icon-button" aria-label="刷新 Skills" title="刷新" disabled={!desktop || locked} onClick={() => { void refreshSkills() }}><RefreshCw size={15} className={skillsBusy ? 'spin' : ''} /></button>
+    </HarnessSectionHeading>
+    <div id="harness-skills-content" hidden={!skillsOpen}>
+    {skillsError && <p className="field-error" role="alert">读取 Skills 失败：{skillsError}</p>}
     {inventory.harnesses.map(harness => <section key={harness.id} className="settings-group harness-skills-group" aria-label={`${harness.name} skills`}>
       <div className="settings-list">
-        <div className="setting-row harness-skills-header"><div className="harness-folder-label"><button className="harness-disclosure" aria-label={`${harness.name}，${harness.skills.length} 个技能`} aria-expanded={!!expanded[harness.id]} aria-controls={`skills-${harness.id}`} onClick={() => setExpanded(current => ({ ...current, [harness.id]: !current[harness.id] }))}><ChevronDown size={16} className={expanded[harness.id] ? 'open' : ''} /><span>{harness.name}</span><span className="harness-count">{loading ? '…' : harness.skills.length}</span></button><p className="harness-path" title={harness.skillsPath}>{harness.skillsPath}</p></div>{skillActions(harness.id, harness.skills.length)}</div>
+        <div className="setting-row harness-skills-header"><div className="harness-folder-label"><button className="harness-disclosure" aria-label={`${harness.name}，${harness.skills.length} 个技能`} aria-expanded={!!expanded[harness.id]} aria-controls={`skills-${harness.id}`} onClick={() => setExpanded(current => ({ ...current, [harness.id]: !current[harness.id] }))}><ChevronDown size={16} className={expanded[harness.id] ? 'open' : ''} /><span>{harness.name}</span><span className="harness-count">{skillsBusy ? '…' : harness.skills.length}</span></button><p className="harness-path" title={displayHarnessPath(harness.skillsPath)}>{displayHarnessPath(harness.skillsPath)}</p></div>{skillActions(harness.id, harness.skills.length)}</div>
         {expanded[harness.id] && <div id={`skills-${harness.id}`} className="harness-skill-list">
-          {harness.skills.length ? harness.skills.map(skill => <div className="setting-row harness-skill-row" key={skill.id}><div className="harness-skill-name" title={skill.path}><FileText size={15} /><div><span>{skill.name}</span>{skill.id !== skill.name && <small>{skill.id}</small>}{!skill.available && <small className="harness-broken">链接已失效</small>}</div></div>{skillActions(harness.id, 1, skill.id, skill.available)}</div>) : <p className="harness-empty">{harness.error ? '读取失败，请检查目录权限。' : loading ? '正在读取技能…' : '暂无技能'}</p>}
+          {harness.skills.length ? harness.skills.map(skill => <div className="setting-row harness-skill-row" key={skill.id}><div className="harness-skill-name" title={displayHarnessPath(skill.path)}><FileText size={15} /><div><span>{skill.name}</span>{skill.id !== skill.name && <small>{skill.id}</small>}{!skill.available && <small className="harness-broken">链接已失效</small>}</div></div>{skillActions(harness.id, 1, skill.id, skill.available)}</div>) : <p className="harness-empty">{harness.error ? '读取失败，请检查目录权限。' : skillsBusy ? '正在读取技能…' : '暂无技能'}</p>}
         </div>}
       </div>{harness.error && <p className="field-error detection-error" role="alert">{harness.error}</p>}
     </section>)}
+    </div>
     <ModelsSection disabled={locked} onBusyChange={onBusyChange} />
     {result && <div className={`harness-result ${result.success ? 'success' : 'error'}`} role="status">{result.success ? <Check size={16} /> : <CircleAlert size={16} />}<span>{result.message}</span></div>}
-    {document && <div className="harness-preview-backdrop" onClick={event => { if (event.target === event.currentTarget) { setDocument(null); previewButton.current?.focus() } }}><section className="harness-preview" role="dialog" aria-modal="true" aria-labelledby="harness-preview-title" aria-describedby="harness-preview-path"><header><div><h2 id="harness-preview-title">AGENTS.md 预览</h2><p id="harness-preview-path">{document.path}</p></div><button ref={closePreview} className="icon-button" aria-label="关闭预览" onClick={() => { setDocument(null); previewButton.current?.focus() }}><X size={18} /></button></header><pre>{document.content || '（空文件）'}</pre></section></div>}
+    {document && <div className="harness-preview-backdrop" onClick={event => { if (event.target === event.currentTarget) { setDocument(null); previewButton.current?.focus() } }}><section className="harness-preview" role="dialog" aria-modal="true" aria-labelledby="harness-preview-title" aria-describedby="harness-preview-path"><header><div><h2 id="harness-preview-title">AGENTS.md 预览</h2><p id="harness-preview-path">{displayHarnessPath(document.path)}</p></div><button ref={closePreview} className="icon-button" aria-label="关闭预览" onClick={() => { setDocument(null); previewButton.current?.focus() }}><X size={18} /></button></header><pre>{document.content || '（空文件）'}</pre></section></div>}
   </div>
 }

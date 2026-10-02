@@ -14,6 +14,7 @@ const api: WideApi = {
   quit: (id, path) => ipcRenderer.invoke('wide:quit', id, path),
   runAll: action => ipcRenderer.invoke('wide:run-all', action),
   harnessInventory: () => ipcRenderer.invoke('wide:harness-inventory'),
+  harnessSkillsInventory: () => ipcRenderer.invoke('wide:harness-skills-inventory'),
   harnessPreviewAgents: () => ipcRenderer.invoke('wide:harness-preview-agents'),
   harnessSyncAgents: () => ipcRenderer.invoke('wide:harness-sync-agents'),
   harnessSyncSkills: (source, skillId) => ipcRenderer.invoke('wide:harness-sync-skills', source, skillId),
@@ -24,6 +25,7 @@ const api: WideApi = {
   modelSave: change => ipcRenderer.invoke('wide:model-save', change),
   modelDelete: target => ipcRenderer.invoke('wide:model-delete', target),
   modelReorder: order => ipcRenderer.invoke('wide:model-reorder', order),
+  modelBatch: change => ipcRenderer.invoke('wide:model-batch', change),
   onBatchProgress: callback => {
     const handler = (_event: Electron.IpcRendererEvent, progress: BatchProgress) => callback(progress)
     ipcRenderer.on('wide:batch-progress', handler)

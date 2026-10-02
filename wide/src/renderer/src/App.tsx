@@ -95,7 +95,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.35')
+  const [version, setVersion] = useState('0.2.44')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -460,8 +460,7 @@ export default function App() {
             {advanced && <div id="advanced-content"><SettingRow label="安装路径" htmlFor="executablePath" error={errors.executablePath}><input id="executablePath" className="field-input path-input" placeholder="自动检测" value={settings.executablePath} {...inputProps('executablePath')} title={installation?.path} onChange={event => updateApplication('executablePath', event.target.value)} /></SettingRow><SettingRow label="调试端口" htmlFor="port" error={errors.port}><input id="port" className="field-input number-input" type="number" min="1024" max="65535" value={settings.port} {...inputProps('port')} onChange={event => updateApplication('port', Number(event.target.value))} /></SettingRow></div>}
           </div>{detectionError && <p className="field-error detection-error" role="alert">{detectionError}</p>}</section>
           <div className="settings-actions"><button className="text-button" disabled={disabled} onClick={() => askRestore('presets')}><RotateCcw size={15} />恢复预设值</button><button className="text-button" disabled={!desktop || disabled || invalid || missingInstallation} onClick={() => askRestore('normal')}>{currentOperation === 'normal' ? <RefreshCw size={15} className="spin" /> : <RotateCcw size={15} />}{currentOperation === 'normal' ? '恢复中…' : '恢复默认界面'}</button></div>
-          <p className="operation-note">启动、退出或恢复默认界面会结束当前 {title} 应用，请先保存当前工作。</p>
-        </div> : isAppSettings ? <div className="settings-page">
+        </div> : isAppSettings ? <div className="settings-page app-settings-page">
           <section className="settings-group" aria-label="应用外观"><h2>外观</h2><div className="settings-list">
             <SettingRow label="主题" htmlFor="app-theme"><SelectControl id="app-theme" label="应用主题" value={theme} disabled={!ready || !!bootError} onChange={value => changeTheme(value as Theme)} options={[{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]} /></SettingRow>
             <SettingRow label="字体" htmlFor="app-fontFamily" error={appErrors.fontFamily}><FontControl id="app-fontFamily" value={appearance.fontFamily} systemOption disabled={!ready || !!bootError} error={appErrors.fontFamily} onChange={value => updateAppearance('fontFamily', value)} /></SettingRow>
