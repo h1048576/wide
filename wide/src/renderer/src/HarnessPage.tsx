@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Copy, Eye, FileText, RefreshCw, Trash2, X } from 'lucide-react'
 import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessInventory, type HarnessOperationResult } from '../../shared/types'
 import ModelsSection from './ModelsSection'
-import HarnessSectionHeading from './HarnessSectionHeading'
+import HarnessSectionHeading, { HarnessExpandToggle } from './HarnessSectionHeading'
 import { displayHarnessPath } from './harnessPath'
 
 const messageOf = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error)
@@ -36,6 +36,7 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
   const desktop = !!window.wide
   const skillsBusy = loading || skillsLoading
   const locked = disabled || skillsBusy || !!operation
+  const allSkillsExpanded = skillsOpen && HARNESSES.every(harness => expanded[harness.id])
 
   async function refresh() {
     if (!window.wide) return
@@ -126,7 +127,8 @@ export default function HarnessPage({ disabled, onBusyChange, onNotice }: {
         <button className="button primary" disabled={!desktop || locked || !inventory.agentsSource.exists} onClick={() => { void run('agents', () => window.wide!.harnessSyncAgents(), { scope: 'all' }) }}>{operation === 'agents' ? <RefreshCw size={14} className="spin" /> : <Copy size={14} />}同步</button>
       </div></div>
     </div><p className="operation-note">以 Claude 的 CLAUDE.md 为源文件，同步为 .factory、.codex、.agents、.dsh 下的 AGENTS.md。{desktop && !loading && !inventory.agentsSource.exists ? '源文件未找到。' : ''}</p></section>
-    <HarnessSectionHeading title="Skills" expanded={skillsOpen} contentId="harness-skills-content" onToggle={() => setSkillsOpen(current => !current)} onExpandAll={() => expandSkills(true)} onCollapseAll={() => expandSkills(false)}>
+    <HarnessSectionHeading title="Skills" expanded={skillsOpen} contentId="harness-skills-content" onToggle={() => setSkillsOpen(current => !current)}>
+      <HarnessExpandToggle title="Skills" expanded={allSkillsExpanded} onToggle={() => expandSkills(!allSkillsExpanded)} />
       <button className="icon-button" aria-label="刷新 Skills" title="刷新" disabled={!desktop || locked} onClick={() => { void refreshSkills() }}><RefreshCw size={15} className={skillsBusy ? 'spin' : ''} /></button>
     </HarnessSectionHeading>
     <div id="harness-skills-content" hidden={!skillsOpen}>

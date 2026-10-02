@@ -56,15 +56,16 @@ export interface ModelDetail { fields: ModelFields; apiKey?: string }
 export interface ModelChange { sourceId: string; target?: ModelTarget; copyFrom?: ModelTarget; fields: ModelFields; apiKey?: string }
 export interface ModelDocument { paths: string[]; content: string }
 export interface ModelOrder { sourceId: string; models: ModelTarget[] }
-export interface ModelBatchChange { action: 'replace' | 'add'; model: string; originalModel?: string }
+export interface ModelBatchChange { action: 'replace' | 'add' | 'delete'; model: string; originalModel?: string }
 export interface ModelBatchResult { changed: number; skipped: number; harnesses: ModelHarnessId[] }
 export const DEFAULT_MODEL_BASE_URL = 'http://127.0.0.1:20128'
-export interface Bootstrap { preferences: Preferences; platform: string; version: string; windowMaximized: boolean; configWarning?: string }
+export interface Bootstrap { preferences: Preferences; platform: string; version: string; windowMaximized: boolean; openAtLogin: boolean; startupAvailable: boolean; configWarning?: string }
 export interface WideApi {
   bootstrap(): Promise<Bootstrap>
   save(id: FeatureId, settings: ApplicationSettings): Promise<ApplicationSettings>
   setTheme(theme: Theme): Promise<void>
   setStartupMode(mode: StartupMode): Promise<void>
+  setOpenAtLogin(enabled: boolean): Promise<boolean>
   setAppearance(settings: AppearanceSettings): Promise<AppearanceSettings>
   setMenuOrder(order: FeatureId[]): Promise<FeatureId[]>
   detect(id: FeatureId, path: string, force?: boolean): Promise<DroidInstallation | null>

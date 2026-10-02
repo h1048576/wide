@@ -6,6 +6,7 @@ import { Store } from './store'
 import { runAllApplications } from './application-batch'
 import { HarnessManager } from './harness'
 import { ModelsManager } from './models'
+import { StartupManager } from './startup'
 import { APPLICATIONS, parseAppearance, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type OperationLevel, type Theme } from '../shared/types'
 
 let window: BrowserWindow | null = null
@@ -13,6 +14,7 @@ let busy = false
 let quitting = false
 let closingAfterSave = false
 const store = new Store()
+const startup = new StartupManager()
 const harness = new HarnessManager()
 const models = new ModelsManager(undefined, join(app.getPath('userData'), 'model-backups'))
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
@@ -26,7 +28,8 @@ function registerIPC() {
       return callback(...args)
     })
   }
-  handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), windowMaximized: window?.isMaximized() ?? false, configWarning: store.warning }))
+  handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), windowMaximized: window?.isMaximized() ?? false, openAtLogin: startup.enabled, startupAvailable: startup.available, configWarning: store.warning }))
+  handle('wide:open-at-login', (enabled: unknown) => startup.set(enabled))
   handle('wide:harness-inventory', () => harness.inventory())
   handle('wide:harness-skills-inventory', () => harness.skillsInventory())
   handle('wide:harness-preview-agents', () => harness.previewAgents())

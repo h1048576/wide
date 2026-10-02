@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Eye, Pencil, Plus, RefreshCw } from 'lucide-react'
+import { ChevronDown, Eye, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import ModelEditor, { ModelDialog, type Editor } from './ModelDialog'
 import ModelBatchDialog from './ModelBatchDialog'
 import ModelList from './ModelList'
-import HarnessSectionHeading from './HarnessSectionHeading'
+import HarnessSectionHeading, { HarnessExpandToggle } from './HarnessSectionHeading'
 import { displayHarnessPath } from './harnessPath'
 import { DEFAULT_MODEL_BASE_URL, type CustomModel, type ModelBatchChange, type ModelDocument, type ModelFields, type ModelHarnessId, type ModelSource, type ModelTarget, type ModelsInventory } from '../../shared/types'
 
@@ -18,7 +18,6 @@ export default function ModelsSection({ disabled, onBusyChange }: { disabled: bo
   const [sectionOpen, setSectionOpen] = useState(true)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [batch, setBatch] = useState<{ action: ModelBatchChange['action']; returnFocus: HTMLElement | null } | null>(null)
-  const [result, setResult] = useState('')
   const [preview, setPreview] = useState<{ harness: ModelHarnessId; document: ModelDocument; returnFocus: HTMLElement | null } | null>(null)
   const [operation, setOperation] = useState('')
   const mounted = useRef(true)
@@ -28,6 +27,7 @@ export default function ModelsSection({ disabled, onBusyChange }: { disabled: bo
   const desktop = !!window.wide
   const locked = disabled || loading || !!operation
   const dialogOpen = !!editor || !!preview || !!batch
+  const allModelsExpanded = sectionOpen && harnesses.every(harness => expanded[harness])
 
   async function refresh() {
     if (!window.wide) return
@@ -100,7 +100,7 @@ export default function ModelsSection({ disabled, onBusyChange }: { disabled: bo
 
   function openBatch(action: ModelBatchChange['action']) {
     if (!desktop || locked || lock.current || dialogOpen) return
-    setError(''); setResult('')
+    setError('')
     setBatch({ action, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : null })
   }
 
@@ -108,12 +108,9 @@ export default function ModelsSection({ disabled, onBusyChange }: { disabled: bo
     if (!batch || locked || lock.current) throw new Error('操作正在执行，请稍后再试')
     lock.current = true; setOperation('batch'); onBusyChange(true)
     try {
-      const next = await window.wide!.modelBatch(change)
+      await window.wide!.modelBatch(change)
       await refresh()
-      if (mounted.current) {
-        setBatch(null)
-        setResult(next.changed ? `已在 ${next.harnesses.join('、')} ${change.action === 'replace' ? '修改' : '添加'} ${next.changed} 个模型${next.skipped ? `，跳过 ${next.skipped} 个${change.action === 'add' ? '已包含该模型' : '未包含原模型'}的配置` : ''}。` : '所有配置均已包含该模型。')
-      }
+      if (mounted.current) setBatch(null)
     } finally {
       lock.current = false
       if (mounted.current) setOperation('')
@@ -136,11 +133,12 @@ export default function ModelsSection({ disabled, onBusyChange }: { disabled: bo
   }
 
   return <div className="harness-models">
-    <HarnessSectionHeading title="Models" expanded={sectionOpen} contentId="harness-models-content" onToggle={() => setSectionOpen(current => !current)} onExpandAll={() => expandModels(true)} onCollapseAll={() => expandModels(false)} disabled={dialogOpen}>
-      <button className="icon-button" aria-label="一键修改模型" title="一键修改模型" disabled={!desktop || locked || dialogOpen} onClick={() => openBatch('replace')}><Pencil size={15} /></button><button className="icon-button" aria-label="一键添加模型" title="一键添加模型" disabled={!desktop || locked || dialogOpen} onClick={() => openBatch('add')}><Plus size={15} /></button><button className="icon-button" aria-label="刷新 Models" title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { setLoading(true); setResult(''); void refresh() }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+    <HarnessSectionHeading title="Models" expanded={sectionOpen} contentId="harness-models-content" onToggle={() => setSectionOpen(current => !current)} disabled={dialogOpen}>
+      <button className="icon-button" aria-label="一键修改模型" title="一键修改模型" disabled={!desktop || locked || dialogOpen} onClick={() => openBatch('replace')}><Pencil size={15} /></button><button className="icon-button" aria-label="一键添加模型" title="一键添加模型" disabled={!desktop || locked || dialogOpen} onClick={() => openBatch('add')}><Plus size={15} /></button><button className="icon-button" aria-label="一键删除模型" title="一键删除模型" disabled={!desktop || locked || dialogOpen} onClick={() => openBatch('delete')}><Trash2 size={15} /></button>
+      <HarnessExpandToggle title="Models" expanded={allModelsExpanded} disabled={dialogOpen} onToggle={() => expandModels(!allModelsExpanded)} />
+      <button className="icon-button" aria-label="刷新 Models" title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
     </HarnessSectionHeading>
     {error && <p className="field-error model-error" role="alert">{error}</p>}
-    {result && <p className="model-result" role="status">{result}</p>}
     <div id="harness-models-content" hidden={!sectionOpen}>
     {harnesses.map(harness => {
       const sources = inventory.sources.filter(source => source.harness === harness)

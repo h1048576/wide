@@ -6,6 +6,7 @@ const api: WideApi = {
   save: (id, settings) => ipcRenderer.invoke('wide:save', id, settings),
   setTheme: theme => ipcRenderer.invoke('wide:theme', theme),
   setStartupMode: mode => ipcRenderer.invoke('wide:startup-mode', mode),
+  setOpenAtLogin: enabled => ipcRenderer.invoke('wide:open-at-login', enabled),
   setAppearance: settings => ipcRenderer.invoke('wide:appearance', settings),
   setMenuOrder: order => ipcRenderer.invoke('wide:menu-order', order),
   detect: (id, path, force = false) => ipcRenderer.invoke('wide:detect', id, path, force),

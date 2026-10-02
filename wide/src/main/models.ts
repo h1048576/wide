@@ -268,7 +268,7 @@ export class ModelsManager {
   }
 
   async batch(input: unknown): Promise<ModelBatchResult> {
-    if (!object(input) || !['replace', 'add'].includes(input.action)) throw new Error('批量模型参数无效')
+    if (!object(input) || !['replace', 'add', 'delete'].includes(input.action)) throw new Error('批量模型参数无效')
     const change = input as ModelBatchChange
     const validId = (value: unknown): value is string => typeof value === 'string' && !!plainModelId(value.trim()) && value.length <= 1024 && !/[\0\r\n]/.test(value)
     if (!validId(change.model) || change.action === 'replace' && !validId(change.originalModel)) throw new Error('请输入有效的模型 ID')
@@ -282,9 +282,10 @@ export class ModelsManager {
       for (const source of await this.sources()) {
         let file: Awaited<ReturnType<ModelsManager['load']>>
         try { file = await this.load(source) } catch (error) { throw new Error(`${source.harness}：${missing(error) ? '未找到配置文件' : error instanceof Error ? error.message : '读取配置失败'}`) }
-        const matched = change.action === 'replace' ? file.entries.map((item, index) => plainModelId(modelId(source.harness, item)) === original ? index : -1).filter(index => index >= 0) : []
+        const matchedId = change.action === 'replace' ? original : requested
+        const matched = change.action !== 'add' ? file.entries.map((item, index) => plainModelId(modelId(source.harness, item)) === matchedId ? index : -1).filter(index => index >= 0) : []
         const alreadyExists = file.entries.some(item => plainModelId(modelId(source.harness, item)) === requested)
-        if (change.action === 'add' && alreadyExists || change.action === 'replace' && !matched.length) { skipped++; continue }
+        if (change.action === 'add' && alreadyExists || change.action !== 'add' && !matched.length) { skipped++; continue }
         if (change.action === 'replace' && alreadyExists) throw new Error(`${source.harness} 已存在新模型，无法替换；本次未写入配置`)
         const entries = [...file.entries]
         const retarget = (item: ObjectValue) => {
@@ -302,7 +303,12 @@ export class ModelsManager {
           const next = this.model(source.harness, fields, old, undefined)
           return this.ordered(source.harness, next)
         }
-        if (change.action === 'add') {
+        if (change.action === 'delete') {
+          const remaining = entries.filter((_, index) => !matched.includes(index))
+          // 从后向前删除，保持后续索引有效，并保留其他模型的顺序和注释。
+          for (const index of [...matched].reverse()) changes.push(...await this.prepare(source, file, remaining, index, true))
+          changed += matched.length
+        } else if (change.action === 'add') {
           const last = file.entries.at(-1)
           if (!last) throw new Error(`${source.harness} 没有可复制的最后一条模型配置；本次未写入配置`)
           entries.push(retarget(last))
@@ -316,6 +322,7 @@ export class ModelsManager {
         harnesses.add(source.harness)
       }
       if (change.action === 'replace' && !changed) throw new Error('未找到原模型，请检查完整模型 ID')
+      if (change.action === 'delete' && !changed) throw new Error('未找到对应模型，请检查完整模型 ID')
       await this.commitAll(changes)
       return { changed, skipped, harnesses: [...harnesses] }
     })

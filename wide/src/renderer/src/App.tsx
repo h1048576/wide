@@ -13,7 +13,7 @@ import { ModelDialog } from './ModelDialog'
 
 type MenuId = FeatureId | 'settings' | 'start' | 'harness'
 type BusyOperation = { id: FeatureId; action: 'apply' | 'normal' | 'exit' } | { id: 'all'; action: BatchAction } | { id: 'harness'; action: 'manage' }
-type SaveDomain = FeatureId | 'appearance' | 'theme' | 'menuOrder' | 'startupMode'
+type SaveDomain = FeatureId | 'appearance' | 'theme' | 'menuOrder' | 'startupMode' | 'openAtLogin'
 type RestoreConfirmation = { action: 'presets' | 'normal'; target: FeatureId | 'settings'; returnFocus: HTMLElement | null }
 type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean }
 const detectionKey = (id: FeatureId, settings: DroidSettings) => JSON.stringify([id, settings.executablePath])
@@ -72,6 +72,10 @@ export default function App() {
   const [menuAnnouncement, setMenuAnnouncement] = useState('')
   const [theme, setTheme] = useState<Theme>('system')
   const [startupMode, setStartupMode] = useState<StartupMode>('default')
+  const [openAtLogin, setOpenAtLogin] = useState(false)
+  const [startupAvailable, setStartupAvailable] = useState(false)
+  const [startupSaving, setStartupSaving] = useState(false)
+  const startupSavingRef = useRef(false)
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches)
   const [applications, setApplications] = useState<ApplicationPreferences>(() => structuredClone(DEFAULT_APPLICATIONS))
   const applicationId: FeatureId = active === 'settings' || active === 'start' || active === 'harness' ? 'droid' : active
@@ -95,7 +99,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.44')
+  const [version, setVersion] = useState('0.2.47')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -112,7 +116,7 @@ export default function App() {
   const menuRef = useRef<HTMLElement>(null)
   const menuDrag = useRef<{ id: FeatureId; pointerId: number; startX: number; startY: number; left: number; top: number; width: number; active: boolean } | null>(null)
   const dragClickBlocked = useRef(false)
-  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, theme: 0, menuOrder: 0, startupMode: 0 })
+  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, theme: 0, menuOrder: 0, startupMode: 0, openAtLogin: 0 })
   const saveErrorsRef = useRef<Partial<Record<SaveDomain, string>>>({})
   const desktop = !!window.wide
   const isAppSettings = active === 'settings'
@@ -170,6 +174,7 @@ export default function App() {
         currentMenuOrder.current = order; setMenuOrder(order)
         setApplications(data.preferences.applications); setAppearance(data.preferences.appearance); setTheme(data.preferences.theme)
         setStartupMode(data.preferences.startupMode)
+        setOpenAtLogin(data.openAtLogin); setStartupAvailable(data.startupAvailable)
         setPlatform(data.platform); setVersion(data.version); setWindowMaximized(data.windowMaximized); setConfigWarning(data.configWarning || ''); setReady(true)
       }).catch(error => { if (mounted) { setBootError(messageOf(error)); setReady(true) } })
     } else setReady(true)
@@ -240,6 +245,14 @@ export default function App() {
   function changeStartupMode(next: StartupMode) {
     setStartupMode(next)
     if (window.wide) persist('startupMode', () => window.wide!.setStartupMode(next))
+  }
+  function changeOpenAtLogin(next: boolean) {
+    if (!window.wide || !startupAvailable || startupSavingRef.current) return
+    startupSavingRef.current = true; setStartupSaving(true)
+    persist('openAtLogin', async () => {
+      try { setOpenAtLogin(await window.wide!.setOpenAtLogin(next)) }
+      finally { startupSavingRef.current = false; setStartupSaving(false) }
+    })
   }
   function reorderMenu(source: FeatureId, target: FeatureId, after: boolean) {
     const current = currentMenuOrder.current
@@ -362,6 +375,7 @@ export default function App() {
     if (window.wide) persist('appearance', () => window.wide!.setAppearance(next))
     changeTheme('system')
     changeStartupMode('default')
+    if (startupAvailable) changeOpenAtLogin(false)
   }
   function askRestore(action: RestoreConfirmation['action']) {
     if (disabled || restoreConfirmationRef.current || !isApplication && !isAppSettings) return
@@ -468,6 +482,7 @@ export default function App() {
             <SettingRow label="模式" htmlFor="app-mode" error={appErrors.mode}><SelectControl id="app-mode" label="应用模式" value={appearance.mode} disabled={!ready || !!bootError} onChange={value => updateAppearance('mode', value as AppearanceMode)} options={[{ value: 'normal', label: '正常' }, { value: 'compact', label: '紧凑' }]} /></SettingRow>
           </div></section>
           <section className="settings-group" aria-label="应用启动"><h2>启动</h2><div className="settings-list">
+            <SettingRow label="开机启动"><Switch label="开机启动" checked={openAtLogin} disabled={disabled || !desktop || !startupAvailable || startupSaving} onChange={changeOpenAtLogin} /></SettingRow>
             <SettingRow label="启动方式" htmlFor="app-startupMode"><SelectControl id="app-startupMode" label="应用启动方式" value={startupMode} disabled={!ready || !!bootError} onChange={value => changeStartupMode(value as StartupMode)} options={[{ value: 'default', label: '默认' }, { value: 'maximized', label: '最大化' }]} /></SettingRow>
           </div></section>
           <div className="settings-actions"><button className="text-button" disabled={disabled} onClick={() => askRestore('presets')}><RotateCcw size={15} />恢复预设值</button></div>
@@ -476,7 +491,7 @@ export default function App() {
     </div>
     {draggedFeature && dragPreview && <div className="feature-item menu-drag-preview" aria-hidden="true" style={{ left: dragPreview.x, top: dragPreview.y, width: dragPreview.width }}><draggedFeature.icon size={20} />{!collapsed && <span>{draggedFeature.name}</span>}</div>}
     {restoreConfirmation && <ModelDialog title={restoreConfirmation.action === 'normal' ? '恢复默认界面' : '恢复预设值'} subtitle={restoreConfirmation.target === 'settings' ? 'wide 设置' : APPLICATIONS[restoreConfirmation.target].name} disabled={disabled} returnFocus={restoreConfirmation.returnFocus} onCancel={dismissRestore} closeLabel="关闭确认弹窗" descriptionId="restore-confirmation-message" className="restore-confirmation-dialog">
-      <p id="restore-confirmation-message" className="restore-confirmation-message">{restoreConfirmation.action === 'normal' ? `将恢复 ${restoreTargetName} 的默认界面并重新启动应用，请先保存当前工作。是否继续？` : restoreConfirmation.target === 'settings' ? '将把 wide 的主题、字体、字号、模式和启动方式恢复为预设值。是否继续？' : `将把 ${restoreTargetName} 的设置恢复为预设值。是否继续？`}</p>
+      <p id="restore-confirmation-message" className="restore-confirmation-message">{restoreConfirmation.action === 'normal' ? `将恢复 ${restoreTargetName} 的默认界面并重新启动应用，请先保存当前工作。是否继续？` : restoreConfirmation.target === 'settings' ? '将把 wide 的主题、字体、字号、模式、开机启动和启动方式恢复为预设值。是否继续？' : `将把 ${restoreTargetName} 的设置恢复为预设值。是否继续？`}</p>
       <div className="harness-actions model-editor-actions"><button className="button secondary" type="button" data-dialog-initial-focus="true" disabled={disabled} onClick={dismissRestore}>取消</button><button className="button primary" type="button" disabled={disabled} onClick={confirmRestore}>确定</button></div>
     </ModelDialog>}
     {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.error ? <CircleAlert size={18} /> : <Check size={18} />}<span>{notice.text}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setNotice(null)}><X size={15} /></button></div>}
