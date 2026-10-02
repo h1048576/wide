@@ -1,6 +1,6 @@
 {
   "name": "wide",
-  "version": "0.2.1",
+  "version": "0.2.35",
   "description": "AI 桌面应用的界面调整工具",
   "private": true,
   "main": "out/main/index.js",
@@ -18,10 +18,12 @@
     "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
+    "jsonc-parser": "^3.3.1",
     "lucide-react": "^0.577.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "ws": "^8.22.0"
+    "ws": "^8.22.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -51,6 +53,9 @@
         "from": "scripts",
         "to": "scripts",
         "filter": [
+          "application-processes.ps1",
+          "maximize-window.ps1",
+          "quit-application.ps1",
           "codex-wide/*.ps1",
           "codex-wide/*.sh",
           "droid-wide/*.ps1",

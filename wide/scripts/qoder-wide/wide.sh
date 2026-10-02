@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
 
 # 对话区宽度和最大宽度，例如 100% / 90rem / 1200px / 80vw
-WIDTH='80rem'
+WIDTH='70vw'
 MAX_WIDTH='90rem'
 
 # 界面字体、字号和字重（100–1000）
 FONT_FAMILY='Cascadia Mono, LXGW WenKai Mono'
-FONT_SIZE=18
+FONT_SIZE=17
 FONT_WEIGHT=300
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1

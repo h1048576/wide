@@ -70,14 +70,16 @@ function useDropdown(options: Option[], value: string, disabled: boolean, onChan
       const desired = Math.min(400, options.length * 42 + 14)
       const upwards = below < desired && above > below
       const maxHeight = Math.max(0, Math.min(400, upwards ? above : below))
-      const width = Math.min(Math.max(bounds.width, 220), window.innerWidth - margin * 2)
-      const left = Math.max(margin, Math.min(bounds.right - width, window.innerWidth - width - margin))
+      const width = Math.min(bounds.width, window.innerWidth - margin * 2)
+      const left = Math.max(margin, Math.min(bounds.left, window.innerWidth - width - margin))
       setPosition({ left, width, maxHeight, ...(upwards ? { bottom: window.innerHeight - bounds.top + gap } : { top: bounds.bottom + gap }) })
     }
     place()
+    const observer = new ResizeObserver(place)
+    if (anchor.current) observer.observe(anchor.current)
     window.addEventListener('resize', place)
     window.addEventListener('scroll', place, true)
-    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true) }
+    return () => { observer.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true) }
   }, [open, options])
   useEffect(() => { if (open) menu.current?.children[active]?.scrollIntoView({ block: 'nearest' }) }, [active, open])
 
@@ -86,7 +88,8 @@ function useDropdown(options: Option[], value: string, disabled: boolean, onChan
 
 function OptionMenu({ id, label, value, options, dropdown }: { id: string; label: string; value: string; options: Option[]; dropdown: ReturnType<typeof useDropdown> }) {
   if (!dropdown.open) return null
-  return createPortal(<div ref={dropdown.menu} id={`${id}-options`} className="dropdown-menu" role="listbox" aria-label={label} style={dropdown.position}>
+  const compact = typeof dropdown.position.width === 'number' && dropdown.position.width < 120
+  return createPortal(<div ref={dropdown.menu} id={`${id}-options`} className={`dropdown-menu${compact ? ' dropdown-menu-compact' : ''}`} role="listbox" aria-label={label} style={dropdown.position}>
     {options.map((option, index) => <div key={option.value} id={`${id}-option-${index}`} role="option" aria-selected={option.value === value} aria-disabled={option.disabled || undefined} className={`dropdown-option ${index === dropdown.active ? 'active' : ''} ${option.disabled ? 'disabled' : ''}`} onPointerMove={() => { if (!option.disabled) dropdown.setActive(index) }} onPointerDown={event => event.preventDefault()} onClick={() => dropdown.choose(index)}>
       <span>{option.label}</span>{option.value === value && <Check size={16} aria-hidden="true" />}
     </div>)}
@@ -99,6 +102,15 @@ export function SelectControl({ id, label, value, disabled = false, onChange, op
     <button id={id} className="dropdown-trigger" type="button" role="combobox" aria-label={label} aria-expanded={dropdown.open} aria-haspopup="listbox" aria-controls={dropdown.open ? `${id}-options` : undefined} aria-activedescendant={dropdown.open && dropdown.active >= 0 ? `${id}-option-${dropdown.active}` : undefined} disabled={disabled} onClick={() => dropdown.open ? dropdown.setOpen(false) : dropdown.show()} onKeyDown={event => dropdown.onKeyDown(event)}>
       <span>{options.find(option => option.value === value)?.label ?? value}</span><ChevronDown size={15} className="dropdown-chevron" aria-hidden="true" />
     </button>
+    <OptionMenu id={id} label={label} value={value} options={options} dropdown={dropdown} />
+  </div>
+}
+
+export function EditableSelectControl({ id, label, value, disabled = false, options, onChange }: { id: string; label: string; value: string; disabled?: boolean; options: Option[]; onChange: (value: string) => void }) {
+  const dropdown = useDropdown(options, value, disabled, onChange)
+  return <div ref={dropdown.anchor} className="editable-select-control">
+    <input id={id} className="field-input" role="combobox" value={value} disabled={disabled} aria-label={label} aria-autocomplete="list" aria-expanded={dropdown.open} aria-haspopup="listbox" aria-controls={dropdown.open ? `${id}-options` : undefined} aria-activedescendant={dropdown.open && dropdown.active >= 0 ? `${id}-option-${dropdown.active}` : undefined} onChange={event => onChange(event.target.value)} onKeyDown={event => dropdown.onKeyDown(event, true)} autoComplete="off" spellCheck={false} />
+    <button className="font-dropdown-button" type="button" aria-label={`选择${label}`} aria-expanded={dropdown.open} aria-haspopup="listbox" aria-controls={dropdown.open ? `${id}-options` : undefined} disabled={disabled} onKeyDown={event => dropdown.onKeyDown(event)} onClick={() => { if (dropdown.open) dropdown.setOpen(false); else dropdown.show(); dropdown.anchor.current?.querySelector('input')?.focus() }}><ChevronDown size={15} aria-hidden="true" /></button>
     <OptionMenu id={id} label={label} value={value} options={options} dropdown={dropdown} />
   </div>
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 # 聊天对话区宽度和最大宽度，例如 100% / 90rem / 1200px / 80vw
-WIDTH='100%'
+WIDTH='70vw'
 MAX_WIDTH='90rem'
 
 # 界面字体、字号和字重（100–1000）

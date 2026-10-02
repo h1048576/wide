@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { createServer } from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
-import { APPLICATIONS, type ApplicationSettings, type DroidInstallation, type FeatureId, type OperationLevel } from '../shared/types'
+import { APPLICATIONS, type ApplicationSettings, type DroidInstallation, type FeatureId, type OperationLevel, type StartupMode } from '../shared/types'
 import { detectDroid, disposeDroidConnections, runDroid } from './droid'
 import { applicationInjection } from './injections'
 import { createPageConnection } from './page-connection'
@@ -18,7 +18,7 @@ type Report = (message: string, level?: OperationLevel) => void
 const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 const quote = (value: string) => `'${value.replaceAll("'", "''")}'`
 const psArgs = (command: string) => ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(`$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); $OutputEncoding=[Console]::OutputEncoding; ${command}`, 'utf16le').toString('base64')]
-const script = (id: FeatureId, host = false) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', `${id}-wide`, host ? 'codexhost-wide.ps1' : `${id}.ps1`)
+const script = (id: FeatureId) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', `${id}-wide`, `${id}.ps1`)
 const connections = new Map<FeatureId, ReturnType<typeof createPageConnection>>()
 function connection(id: FeatureId) {
   let value = connections.get(id)
@@ -34,44 +34,35 @@ export function disposeApplications() {
   connections.clear()
 }
 
-async function detectHost(): Promise<DroidInstallation> {
-  const { stdout } = await exec(powershell, psArgs(`$command=Get-Command codexhost.ps1 -CommandType ExternalScript -ErrorAction Stop | Select-Object -First 1; $root=Split-Path -Parent $command.Path; $package=Join-Path $root 'node_modules\\@codexhost\\cli'; $arch=if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -eq 'Arm64') { 'arm64' } else { 'x64' }; $renderer=Join-Path $package "node_modules\\@codexhost\\cli-win32-$arch\\app\\renderer-extension.js"; if (-not (Test-Path -LiteralPath $renderer)) { throw '没有找到 CodexHost Renderer' }; $version=(Get-Content -LiteralPath (Join-Path $package 'package.json') -Raw | ConvertFrom-Json).version; @{path=$command.Path;version=$version} | ConvertTo-Json -Compress`), { windowsHide: true, timeout: 20000 })
-  const data = JSON.parse(stdout.trim())
-  return { name: 'CodexHost', path: data.path, version: data.version || '未知版本' }
-}
 const installationCache = new Map<string, { value: DroidInstallation | null; expires: number }>()
 const installationRequests = new Map<string, Promise<DroidInstallation | null>>()
-export function detectApplication(id: FeatureId, path: string, mode: ApplicationSettings['launchMode'] = 'desktop', force = false): Promise<DroidInstallation | null> {
-  const key = JSON.stringify([id, path, mode])
+export function detectApplication(id: FeatureId, path: string, force = false): Promise<DroidInstallation | null> {
+  const key = JSON.stringify([id, path])
   const cached = installationCache.get(key)
   if (!force && cached && cached.expires > Date.now()) return Promise.resolve(cached.value)
   const pending = installationRequests.get(key)
   if (pending) return pending
-  const request = resolveApplication(id, path, mode).then(value => {
+  const request = resolveApplication(id, path).then(value => {
     installationCache.set(key, { value, expires: Date.now() + 60000 })
     return value
   }).finally(() => installationRequests.delete(key))
   installationRequests.set(key, request)
   return request
 }
-async function resolveApplication(id: FeatureId, path: string, mode: ApplicationSettings['launchMode']): Promise<DroidInstallation | null> {
+async function resolveApplication(id: FeatureId, path: string): Promise<DroidInstallation | null> {
   if (id === 'droid') return detectDroid(path)
   const name = APPLICATIONS[id].name
   if (process.platform === 'win32') {
     try {
-      // 先检查桌面安装；CodexHost 仍依赖 Store 版 Codex。
-      const { stdout } = await exec(powershell, psArgs(`& ${quote(script(id))} -DetectOnly ${path && mode !== 'codexhost' ? `-ExecutablePath ${quote(path)}` : ''}`), { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 })
+      const { stdout } = await exec(powershell, psArgs(`& ${quote(script(id))} -DetectOnly ${path ? `-ExecutablePath ${quote(path)}` : ''}`), { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 })
       const data = JSON.parse(stdout.trim())
-      if (id === 'codex' && mode === 'codexhost') return await detectHost()
       return { name: data.ApplicationName || name, path: data.Executable, version: data.Version || '未知版本' }
     } catch (error) {
-      if (id === 'codex' && mode === 'codexhost') throw new Error('请安装 Store 版 Codex 和 npm 版 CodexHost，并确认 codexhost.ps1 在 PATH 中。')
       if (path) throw new Error(`无法识别指定路径，请选择 ${name} 的可执行文件。`)
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('系统 PowerShell 不可用。')
       return null
     }
   }
-  if (mode === 'codexhost') throw new Error('CodexHost 启动脚本目前仅适用于 Windows。')
   const appNames = id === 'qoder' ? ['Qoder', 'Qoder CN'] : [name]
   const binaries = appNames.flatMap(value => [value, value.toLowerCase(), `${value.toLowerCase()}-desktop`])
   const candidates = path ? [path] : process.platform === 'darwin'
@@ -101,6 +92,24 @@ async function resolveApplication(id: FeatureId, path: string, mode: Application
   }
   if (path) throw new Error(`指定路径不可用，请选择 ${name} 应用程序。`)
   return null
+}
+
+export async function isApplicationRunning(id: FeatureId, installation: DroidInstallation): Promise<boolean> {
+  if (process.platform === 'win32') {
+    const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'application-processes.ps1')
+    const { stdout } = await exec(powershell, psArgs(`$ErrorActionPreference='Stop'; . ${quote(helper)}; Test-WideApplicationRunning ${quote(installation.path)} ${quote(id)} | ConvertTo-Json -Compress`), { windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 })
+    const running: unknown = JSON.parse(stdout.trim())
+    if (typeof running !== 'boolean') throw new Error(`无法确认 ${APPLICATIONS[id].name} 的运行状态。`)
+    return running
+  }
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    const { stdout } = await exec('/bin/ps', ['-axo', 'command='], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 })
+    return stdout.split('\n').some(line => {
+      const command = line.trimStart()
+      return command === installation.path || command.startsWith(installation.path + ' ')
+    })
+  }
+  throw new Error('当前操作系统暂不支持检测应用运行状态。')
 }
 
 function executeScript(command: string, name: string, report: Report): Promise<number | undefined> {
@@ -148,10 +157,6 @@ async function connectPages(id: Exclude<FeatureId, 'droid'>, port: number, setti
 }
 async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report) {
   const capability = APPLICATIONS[id]
-  if (id === 'codex' && settings.launchMode === 'codexhost' && action === 'apply') {
-    await executeScript(`& ${quote(script(id, true))} -Width ${quote(settings.width)} -FontFamily ${quote(settings.fontFamily)} -FontSize ${settings.fontSize} -FontWeight ${settings.fontWeight} -PreventSummary ${Number(settings.preventSummary)} -OutputDirectory ${quote(join(app.getPath('userData'), 'codexhost'))} -Detach -Restart`, capability.name, report)
-    return
-  }
   const args = [`& ${quote(script(id))}`, '-Width', quote(settings.width), '-FontWeight', String(settings.fontWeight), '-Port', String(settings.port)]
   if (capability.fontFamily) args.push('-FontFamily', quote(settings.fontFamily))
   if (capability.fontSize) args.push('-FontSize', String(settings.fontSize))
@@ -160,7 +165,7 @@ async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'no
   if (capability.diff) args.push('-HideGitDiff', String(Number(settings.hideGitDiff)))
   if (capability.changes) args.push('-HideChanges', String(Number(settings.hideChanges)))
   if (capability.summary) args.push('-PreventSummary', String(Number(settings.preventSummary)))
-  if (settings.executablePath && settings.launchMode !== 'codexhost') args.push('-ExecutablePath', quote(settings.executablePath))
+  if (settings.executablePath) args.push('-ExecutablePath', quote(settings.executablePath))
   if (action === 'normal') args.push('-Normal')
   else if (id === 'zcode' || id === 'qoder') args.push('-LaunchOnly')
   const port = await executeScript(args.join(' '), capability.name, report)
@@ -212,12 +217,66 @@ async function runUnix(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'norma
   })
   if (port) await connectPages(id, port, settings, report)
 }
-export async function runApplication(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report) {
-  if (id === 'droid') return runDroid(action, settings, report)
-  const installation = await detectApplication(id, settings.executablePath, settings.launchMode)
+export async function runApplication(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report, startupMode: StartupMode = 'default') {
+  if (id === 'droid' && startupMode === 'default') return runDroid(action, settings, report)
+  const installation = await detectApplication(id, settings.executablePath)
   if (!installation) throw new Error(`没有找到 ${APPLICATIONS[id].name}，请在高级设置中选择安装路径。`)
-  connection(id).dispose()
-  if (process.platform === 'win32') await runWindows(id, action, settings, report)
+  if (id !== 'droid') connection(id).dispose()
+  if (id === 'droid') await runDroid(action, settings, report)
+  else if (process.platform === 'win32') await runWindows(id, action, settings, report)
   else if (process.platform === 'darwin' || process.platform === 'linux') await runUnix(id, action, settings, installation, report)
   else throw new Error('当前操作系统暂不支持启动。')
+  if (startupMode === 'maximized' && process.platform === 'win32') {
+    const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'maximize-window.ps1')
+    try {
+      await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)}`), { windowsHide: true, timeout: 22000, maxBuffer: 1024 * 1024 })
+    } catch { throw new Error(`${APPLICATIONS[id].name} 已启动，但未能最大化主窗口，请确认主窗口已打开。`) }
+  }
+}
+
+export async function quitApplication(id: FeatureId, path: string) {
+  // 退出前重新识别安装，兼容运行期间切换到新版本的桌面应用。
+  const installation = await detectApplication(id, path, true)
+  if (!installation) throw new Error(`没有找到 ${APPLICATIONS[id].name}，请先选择正确的安装路径。`)
+  if (id === 'droid') disposeDroidConnections()
+  else connections.get(id)?.dispose()
+  if (process.platform === 'win32') {
+    const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'quit-application.ps1')
+    try {
+      await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)} -ProtectedProcessId ${process.pid}`), { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 })
+    } catch { throw new Error(`未能完整退出 ${APPLICATIONS[id].name}，请检查是否存在无权限关闭的进程。`) }
+  } else if (process.platform === 'darwin' || process.platform === 'linux') await quitUnix(installation)
+  else throw new Error('当前操作系统暂不支持退出应用。')
+}
+
+async function quitUnix(installation: DroidInstallation) {
+  const tracked = new Map<number, string>()
+  const discover = async () => {
+    const { stdout } = await exec('/bin/ps', ['-axo', 'pid=,ppid=,command='], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 })
+    const snapshot = stdout.split('\n').flatMap(line => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
+      return match ? [{ pid: Number(match[1]), parent: Number(match[2]), command: match[3] }] : []
+    })
+    const owned = new Set(snapshot.filter(value => value.command === installation.path || value.command.startsWith(installation.path + ' ') || tracked.get(value.pid) === value.command).map(value => value.pid))
+    let changed: boolean
+    do {
+      changed = false
+      for (const value of snapshot) if (value.pid !== process.pid && !owned.has(value.pid) && owned.has(value.parent)) { owned.add(value.pid); changed = true }
+    } while (changed)
+    const running = snapshot.filter(value => owned.has(value.pid))
+    for (const value of running) tracked.set(value.pid, value.command)
+    return running
+  }
+  const signal = (pid: number, kind: NodeJS.Signals) => { try { process.kill(pid, kind) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error } }
+  const running = await discover()
+  if (!running.length) return
+  running.forEach(value => signal(value.pid, 'SIGTERM'))
+  const deadline = Date.now() + 6000
+  while (Date.now() < deadline) {
+    await sleep(250)
+    if (!(await discover()).length) return
+  }
+  for (const value of await discover()) signal(value.pid, 'SIGKILL')
+  await sleep(250)
+  if ((await discover()).length) throw new Error(`${installation.name} 仍有后台进程未退出。`)
 }

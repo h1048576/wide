@@ -1,5 +1,11 @@
 export type FeatureId = 'codex' | 'droid' | 'paseo' | 'qoder' | 'workbuddy' | 'zcode'
 export type Theme = 'system' | 'light' | 'dark'
+export type AppearanceMode = 'normal' | 'compact'
+export type StartupMode = 'default' | 'maximized'
+export function parseStartupMode(input: unknown): StartupMode {
+  if (input !== 'default' && input !== 'maximized') throw new Error('启动方式无效')
+  return input
+}
 export interface DroidSettings {
   width: string
   maxWidth: string
@@ -13,29 +19,74 @@ export interface DroidSettings {
   executablePath: string
   hideChanges: boolean
   preventSummary: boolean
-  launchMode: 'desktop' | 'codexhost'
 }
-export interface AppearanceSettings { fontFamily: string; fontSize: number }
+export interface AppearanceSettings { fontFamily: string; fontSize: number; mode: AppearanceMode }
 export type ApplicationSettings = DroidSettings
 export type ApplicationPreferences = Record<FeatureId, ApplicationSettings>
-export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; menuOrder: FeatureId[]; menuOrderVersion: number }
+export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number }
 export interface DroidInstallation { name: string; path: string; version: string }
 export type OperationLevel = 'info' | 'success' | 'error'
 export interface JobResult { success: boolean; message: string }
-export interface Bootstrap { preferences: Preferences; platform: string; version: string; configWarning?: string }
+export type BatchAction = 'start' | 'restart' | 'exit'
+export interface BatchApplicationResult { id: FeatureId; status: 'success' | 'skipped' | 'error'; message: string; skipReason?: 'not-installed' | 'already-running' }
+export interface BatchProgress { action: BatchAction; currentId: FeatureId | null; completed: number; total: number; results: BatchApplicationResult[] }
+export interface BatchResult extends JobResult { action: BatchAction; results: BatchApplicationResult[] }
+export type HarnessId = 'claude' | 'agents' | 'droid' | 'codex'
+export const HARNESSES: { id: HarnessId; name: string; directory: string }[] = [
+  { id: 'claude', name: 'Claude', directory: '.claude' },
+  { id: 'agents', name: 'Agents', directory: '.agents' },
+  { id: 'droid', name: 'Droid', directory: '.factory' },
+  { id: 'codex', name: 'Codex', directory: '.codex' }
+]
+export interface HarnessSkill { id: string; name: string; path: string; linked: boolean; available: boolean }
+export interface HarnessFolder { id: HarnessId; name: string; path: string; skillsPath: string; exists: boolean; skills: HarnessSkill[]; error?: string }
+export interface HarnessInventory { agentsSource: { path: string; exists: boolean }; harnesses: HarnessFolder[] }
+export interface HarnessDocument { path: string; content: string }
+export interface HarnessOperationResult extends JobResult { completed: number; failed: number }
+export type ModelHarnessId = 'claude' | 'droid' | 'dsh'
+export interface CustomModel { index: number; model: string; name: string; revision: string }
+export interface ModelSource { id: string; harness: ModelHarnessId; path: string; label: string; models: CustomModel[]; editable: boolean; baseUrl?: string; error?: string }
+export interface ModelsInventory { sources: ModelSource[] }
+export interface ModelFields {
+  model: string; name: string; description?: string; baseUrl?: string; provider?: string
+  reasoningEfforts?: Record<string, string | null> | false
+}
+export interface ModelTarget { sourceId: string; index: number; revision: string }
+export interface ModelDetail { fields: ModelFields; apiKey?: string }
+export interface ModelChange { sourceId: string; target?: ModelTarget; copyFrom?: ModelTarget; fields: ModelFields; apiKey?: string }
+export interface ModelDocument { paths: string[]; content: string }
+export interface ModelOrder { sourceId: string; models: ModelTarget[] }
+export const DEFAULT_MODEL_BASE_URL = 'http://127.0.0.1:20128'
+export interface Bootstrap { preferences: Preferences; platform: string; version: string; windowMaximized: boolean; configWarning?: string }
 export interface WideApi {
   bootstrap(): Promise<Bootstrap>
   save(id: FeatureId, settings: ApplicationSettings): Promise<ApplicationSettings>
   setTheme(theme: Theme): Promise<void>
+  setStartupMode(mode: StartupMode): Promise<void>
   setAppearance(settings: AppearanceSettings): Promise<AppearanceSettings>
   setMenuOrder(order: FeatureId[]): Promise<FeatureId[]>
-  detect(id: FeatureId, path: string, mode: ApplicationSettings['launchMode'], force?: boolean): Promise<DroidInstallation | null>
+  detect(id: FeatureId, path: string, force?: boolean): Promise<DroidInstallation | null>
   chooseExecutable(id: FeatureId): Promise<string | null>
   run(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings): Promise<JobResult>
+  quit(id: FeatureId, path: string): Promise<JobResult>
+  runAll(action: BatchAction): Promise<BatchResult>
+  harnessInventory(): Promise<HarnessInventory>
+  harnessPreviewAgents(): Promise<HarnessDocument>
+  harnessSyncAgents(): Promise<HarnessOperationResult>
+  harnessSyncSkills(source: 'claude' | 'agents', skillId?: string): Promise<HarnessOperationResult>
+  harnessDeleteSkills(id: HarnessId, skillId: string): Promise<HarnessOperationResult>
+  modelsInventory(): Promise<ModelsInventory>
+  modelDetail(target: ModelTarget): Promise<ModelDetail>
+  modelPreview(sourceId: string): Promise<ModelDocument>
+  modelSave(change: ModelChange): Promise<void>
+  modelDelete(target: ModelTarget): Promise<void>
+  modelReorder(order: ModelOrder): Promise<void>
+  onBatchProgress(callback: (progress: BatchProgress) => void): () => void
   onNotice(callback: (result: JobResult) => void): () => void
+  onWindowMaximized(callback: (maximized: boolean) => void): () => void
   windowAction(action: 'minimize' | 'maximize' | 'close'): void
 }
-export const DEFAULT_APPEARANCE: AppearanceSettings = { fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17 }
+export const DEFAULT_APPEARANCE: AppearanceSettings = { fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, mode: 'compact' }
 export const DEFAULT_MENU_ORDER: FeatureId[] = ['codex', 'droid', 'zcode', 'workbuddy', 'qoder', 'paseo']
 export const MENU_ORDER_VERSION = 2
 export function normalizeMenuOrder(input: unknown): FeatureId[] {
@@ -51,19 +102,21 @@ export function appearanceErrors(value: AppearanceSettings): Partial<Record<keyo
   const errors: Partial<Record<keyof AppearanceSettings, string>> = {}
   if (typeof value.fontFamily !== 'string' || !value.fontFamily.trim() || value.fontFamily.length > 300 || /[;{}<>\r\n]/.test(value.fontFamily)) errors.fontFamily = '请输入有效的字体名称'
   if (!Number.isInteger(value.fontSize) || value.fontSize < 10 || value.fontSize > 24) errors.fontSize = '字号须为 10–24 的整数'
+  if (value.mode !== 'normal' && value.mode !== 'compact') errors.mode = '界面模式无效'
   return errors
 }
 export function parseAppearance(input: unknown): AppearanceSettings {
   if (!input || typeof input !== 'object') throw new Error('应用字体设置格式无效')
-  const value = input as AppearanceSettings
+  const saved = input as AppearanceSettings
+  const value = { ...saved, mode: saved.mode === undefined ? DEFAULT_APPEARANCE.mode : saved.mode }
   const errors = Object.values(appearanceErrors(value))
   if (errors.length) throw new Error(errors[0])
-  return { fontFamily: value.fontFamily, fontSize: value.fontSize }
+  return { fontFamily: value.fontFamily, fontSize: value.fontSize, mode: value.mode }
 }
 export const DEFAULT_DROID: DroidSettings = {
   width: '70vw', maxWidth: '90rem', chatHeight: '80px',
   fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, fontWeight: 300,
-  hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, launchMode: 'desktop', port: 9335, executablePath: ''
+  hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, port: 9335, executablePath: ''
 }
 export const APPLICATIONS = {
   codex: { name: 'Codex', maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
@@ -74,12 +127,12 @@ export const APPLICATIONS = {
   paseo: { name: 'Paseo', maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
 } satisfies Record<FeatureId, object>
 export const DEFAULT_APPLICATIONS: ApplicationPreferences = {
-  codex: { ...DEFAULT_DROID, width: '80rem', fontSize: 16, fontWeight: 100, preventSummary: true, port: 9331 },
+  codex: { ...DEFAULT_DROID, fontWeight: 100, preventSummary: true, port: 9331 },
   droid: { ...DEFAULT_DROID },
-  zcode: { ...DEFAULT_DROID, width: '90rem', hideChanges: true, port: 9332 },
-  workbuddy: { ...DEFAULT_DROID, width: '100%', fontWeight: 200, port: 9333 },
-  qoder: { ...DEFAULT_DROID, width: '80rem', fontSize: 18, port: 9334 },
-  paseo: { ...DEFAULT_DROID, width: '100rem', hideLocalMerge: true, hideGitDiff: true, port: 9336 }
+  zcode: { ...DEFAULT_DROID, hideChanges: true, port: 9332 },
+  workbuddy: { ...DEFAULT_DROID, fontWeight: 200, port: 9333 },
+  qoder: { ...DEFAULT_DROID, port: 9334 },
+  paseo: { ...DEFAULT_DROID, hideLocalMerge: true, hideGitDiff: true, port: 9336 }
 }
 export function parseFeatureId(input: unknown): FeatureId {
   if (typeof input !== 'string' || !DEFAULT_MENU_ORDER.includes(input as FeatureId)) throw new Error('应用标识无效')
@@ -101,7 +154,6 @@ export function settingsErrors(value: DroidSettings): Partial<Record<keyof Droid
   if (typeof value.executablePath !== 'string' || /[\r\n\0]/.test(value.executablePath)) errors.executablePath = '应用路径无效'
   if (typeof value.hideLocalMerge !== 'boolean' || typeof value.hideGitDiff !== 'boolean') errors.hideLocalMerge = '隐藏选项无效'
   if (typeof value.hideChanges !== 'boolean' || typeof value.preventSummary !== 'boolean') errors.hideChanges = '界面选项无效'
-  if (!['desktop', 'codexhost'].includes(value.launchMode)) errors.launchMode = '启动方式无效'
   return errors
 }
 export function parseSettings(input: unknown, id: FeatureId = 'droid'): DroidSettings {
@@ -115,6 +167,5 @@ export function parseSettings(input: unknown, id: FeatureId = 'droid'): DroidSet
   if (errors.length) throw new Error(errors[0])
   const capability = APPLICATIONS[id]
   return { ...clean, hideLocalMerge: capability.merge && clean.hideLocalMerge, hideGitDiff: capability.diff && clean.hideGitDiff,
-    hideChanges: capability.changes && clean.hideChanges, preventSummary: capability.summary && clean.preventSummary,
-    launchMode: id === 'codex' ? clean.launchMode : 'desktop' }
+    hideChanges: capability.changes && clean.hideChanges, preventSummary: capability.summary && clean.preventSummary }
 }

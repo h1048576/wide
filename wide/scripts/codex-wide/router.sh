@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 # 只需要改这里，例如 72rem / 80rem / 90rem / 1200px / 1400px。
-WIDTH='80rem'
+WIDTH='70vw'
 
 # 界面字体、字号和字重（100–1000）
 FONT_FAMILY='Cascadia Mono, LXGW WenKai Mono'

@@ -2,7 +2,7 @@
     [switch]$DetectOnly,
     [string]$ExecutablePath,
     [ValidatePattern('^(?:auto|fit-content|(?:0|[1-9][0-9]{0,3})(?:\.[0-9]+)?(?:px|rem|em|vw|vh|%))$')]
-    [string]$Width = '80rem',
+    [string]$Width = '70vw',
 
     [ValidateRange(100, 1000)]
     [int]$FontWeight = 300,

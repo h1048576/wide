@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 # 只需要改这里，例如 72rem / 80rem / 90rem / 1200px / 1400px
-WIDTH='100rem'
+WIDTH='70vw'
 
 # 界面字重（100–1000）
 FONT_WEIGHT=300

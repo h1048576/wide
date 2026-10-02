@@ -1,15 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { detectApplication, disposeApplications, runApplication } from './applications'
+import { detectApplication, disposeApplications, runApplication, quitApplication } from './applications'
 import { Store } from './store'
-import { APPLICATIONS, parseAppearance, parseFeatureId, parseMenuOrder, parseSettings, type OperationLevel, type Theme } from '../shared/types'
+import { runAllApplications } from './application-batch'
+import { HarnessManager } from './harness'
+import { ModelsManager } from './models'
+import { APPLICATIONS, parseAppearance, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type OperationLevel, type Theme } from '../shared/types'
 
 let window: BrowserWindow | null = null
 let busy = false
 let quitting = false
 let closingAfterSave = false
 const store = new Store()
+const harness = new HarnessManager()
+const models = new ModelsManager(undefined, join(app.getPath('userData'), 'model-backups'))
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 const rendererFile = join(__dirname, '../renderer/index.html')
 const rendererUrl = isDev ? process.env.ELECTRON_RENDERER_URL! : pathToFileURL(rendererFile).href
@@ -21,7 +26,23 @@ function registerIPC() {
       return callback(...args)
     })
   }
-  handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), configWarning: store.warning }))
+  handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), windowMaximized: window?.isMaximized() ?? false, configWarning: store.warning }))
+  handle('wide:harness-inventory', () => harness.inventory())
+  handle('wide:harness-preview-agents', () => harness.previewAgents())
+  const harnessMutation = async (task: () => Promise<unknown>) => {
+    if (busy) throw new Error('操作正在执行，请稍后再试。')
+    busy = true
+    try { return await task() } finally { busy = false; if (quitting) app.quit() }
+  }
+  handle('wide:harness-sync-agents', () => harnessMutation(() => harness.syncAgents()))
+  handle('wide:harness-sync-skills', (source: unknown, skillId: unknown) => harnessMutation(() => harness.syncSkills(source, skillId)))
+  handle('wide:harness-delete-skills', (id: unknown, skillId: unknown) => harnessMutation(() => harness.deleteSkills(id, skillId)))
+  handle('wide:models-inventory', () => models.inventory())
+  handle('wide:model-detail', (target: unknown) => models.detail(target))
+  handle('wide:model-preview', (sourceId: unknown) => models.preview(sourceId))
+  handle('wide:model-save', (change: unknown) => harnessMutation(() => models.save(change)))
+  handle('wide:model-delete', (target: unknown) => harnessMutation(() => models.delete(target)))
+  handle('wide:model-reorder', (order: unknown) => harnessMutation(() => models.reorder(order)))
   handle('wide:save', async (feature: unknown, input: unknown) => {
     const id = parseFeatureId(feature)
     const settings = parseSettings(input, id)
@@ -38,17 +59,20 @@ function registerIPC() {
     await store.update(current => ({ ...current, appearance }))
     return appearance
   })
+  handle('wide:startup-mode', async (input: unknown) => {
+    const startupMode = parseStartupMode(input)
+    await store.update(current => ({ ...current, startupMode }))
+  })
   handle('wide:menu-order', async (input: unknown) => {
     const menuOrder = parseMenuOrder(input)
     await store.update(current => ({ ...current, menuOrder }))
     return menuOrder
   })
-  handle('wide:detect', (feature: unknown, path: unknown, mode: unknown, force: unknown = false) => {
+  handle('wide:detect', (feature: unknown, path: unknown, force: unknown = false) => {
     const id = parseFeatureId(feature)
-    if (mode !== 'desktop' && mode !== 'codexhost') throw new Error('启动方式无效')
     if (typeof path !== 'string' || path.length > 4096 || /[\0\r\n]/.test(path)) throw new Error('应用路径无效')
     if (typeof force !== 'boolean') throw new Error('检测参数无效')
-    return detectApplication(id, path, mode, force)
+    return detectApplication(id, path, force)
   })
   handle('wide:choose', async (feature: unknown) => {
     const id = parseFeatureId(feature)
@@ -75,8 +99,8 @@ function registerIPC() {
     busy = true
     try {
       await store.update(current => ({ ...current, applications: { ...current.applications, [id]: settings } }))
-      await runApplication(id, action, settings, report)
-      const message = action === 'normal' ? `${name} 已以默认界面重新启动。` : settings.launchMode === 'codexhost' ? 'CodexHost 已在后台启动，页面设置由 Renderer 自动应用。' : `${name} 界面设置已生效。`
+      await runApplication(id, action, settings, report, store.preferences.startupMode)
+      const message = action === 'normal' ? `${name} 已以默认界面重新启动。` : `${name} 界面设置已生效。`
       return { success: true, message }
     } catch (error) {
       const message = failureDetail || (error instanceof Error ? error.message : String(error))
@@ -92,6 +116,35 @@ function registerIPC() {
     if (action === 'maximize') window?.isMaximized() ? window.unmaximize() : window?.maximize()
     if (action === 'close') window?.close()
   })
+  handle('wide:quit', async (feature: unknown, path: unknown) => {
+    const id = parseFeatureId(feature)
+    if (typeof path !== 'string' || path.length > 4096 || /[\0\r\n]/.test(path)) throw new Error('应用路径无效')
+    if (busy) throw new Error('应用操作正在执行，请稍后再试。')
+    busy = true
+    try {
+      await quitApplication(id, path)
+      return { success: true, message: `${APPLICATIONS[id].name} 已完全退出。` }
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : String(error) }
+    } finally {
+      busy = false
+      if (quitting) app.quit()
+    }
+  })
+  handle('wide:run-all', async (action: unknown) => {
+    if (action !== 'start' && action !== 'restart' && action !== 'exit') throw new Error('全局操作无效')
+    if (busy) throw new Error('应用操作正在执行，请稍后再试。')
+    busy = true
+    try {
+      // 退出仍使用最后成功保存的设置，避免字体等设置保存失败时无法退出应用。
+      await store.flush().catch(error => { if (action !== 'exit') throw error })
+      return await runAllApplications(action, store.preferences,
+        progress => { if (window && !window.isDestroyed()) window.webContents.send('wide:batch-progress', progress) })
+    } finally {
+      busy = false
+      if (quitting) app.quit()
+    }
+  })
 }
 function createWindow() {
   window = new BrowserWindow({
@@ -105,6 +158,11 @@ function createWindow() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event, url) => { if (url !== rendererUrl) event.preventDefault() })
   window.once('ready-to-show', () => window?.show())
+  const publishMaximized = () => {
+    if (window && !window.isDestroyed()) window.webContents.send('wide:window-maximized', window.isMaximized())
+  }
+  window.on('maximize', publishMaximized)
+  window.on('unmaximize', publishMaximized)
   window.on('close', event => {
     if (busy) {
       event.preventDefault()

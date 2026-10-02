@@ -3,10 +3,10 @@
     [ValidateSet(0, 1)][int]$PreventSummary = 1,
     [string]$ExecutablePath,
     [ValidatePattern('^(?:auto|fit-content|(?:0|[1-9][0-9]{0,3})(?:\.[0-9]+)?(?:px|rem|em|vw|vh|%))$')]
-    [string]$Width = '80rem',
+    [string]$Width = '70vw',
 
     [ValidateRange(8, 72)]
-    [int]$FontSize = 18,
+    [int]$FontSize = 17,
 
     [ValidateRange(100, 1000)]
     [int]$FontWeight = 300,

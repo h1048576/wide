@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 # 对话区宽度，例如 72rem / 80rem / 90rem / 1200px / 1400px
-WIDTH='90rem'
+WIDTH='70vw'
 
 # 中英文字体按顺序回退：Cascadia Mono 显示英文，LXGW WenKai Mono 补充中文字符。
 FONT_FAMILY='Cascadia Mono, LXGW WenKai Mono'

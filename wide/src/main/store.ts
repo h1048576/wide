@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_MENU_ORDER, MENU_ORDER_VERSION, normalizeMenuOrder, parseAppearance, parseSettings, type Preferences, type ApplicationPreferences } from '../shared/types'
 
 export class Store {
-  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION }
+  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, startupMode: 'default', menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION }
   warning?: string
   private queue: Promise<void> = Promise.resolve()
   private pending = 0
@@ -24,6 +24,7 @@ export class Store {
       this.preferences = {
         applications: Object.fromEntries(DEFAULT_MENU_ORDER.map(id => [id, parseSettings({ ...DEFAULT_APPLICATIONS[id], ...(data.applications?.[id] ?? (id === 'droid' ? data.droid : undefined)) }, id)])) as ApplicationPreferences,
         theme: ['system', 'light', 'dark'].includes(data.theme) ? data.theme : 'system',
+        startupMode: data.startupMode === 'maximized' ? 'maximized' : 'default',
         appearance: data.appearance === undefined ? { ...DEFAULT_APPEARANCE } : parseAppearance(data.appearance),
         menuOrder: data.menuOrderVersion === MENU_ORDER_VERSION ? normalizeMenuOrder(data.menuOrder) : [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION
       }
