@@ -23,7 +23,8 @@ const connections = new Map<FeatureId, ReturnType<typeof createPageConnection>>(
 function connection(id: FeatureId) {
   let value = connections.get(id)
   if (!value) {
-    value = createPageConnection(APPLICATIONS[id].name, `${id}-wide-${id === 'codex' || id === 'paseo' ? 'width' : 'ui'}-override`, id === 'qoder' ? url => /^qoder(?:-cn)?-app:\/\/renderer\//.test(url) : undefined)
+    value = createPageConnection(APPLICATIONS[id].name, `${id}-wide-${id === 'codex' || id === 'paseo' ? 'width' : 'ui'}-override`,
+      id === 'qoder' ? url => /^qoder(?:-cn)?-app:\/\/renderer\//.test(url) : id === 'dsh' ? url => url.startsWith('dsh-app://app/') : undefined)
     connections.set(id, value)
   }
   return value
@@ -63,8 +64,8 @@ async function resolveApplication(id: FeatureId, path: string): Promise<DroidIns
       return null
     }
   }
-  const appNames = id === 'qoder' ? ['Qoder', 'Qoder CN'] : [name]
-  const binaries = appNames.flatMap(value => [value, value.toLowerCase(), `${value.toLowerCase()}-desktop`])
+  const appNames = id === 'qoder' ? ['Qoder', 'Qoder CN'] : id === 'dsh' ? ['DeepSeek Harness'] : [name]
+  const binaries = id === 'dsh' ? ['DeepSeek Harness', 'deepseek-harness', 'deepseek-harness-desktop'] : appNames.flatMap(value => [value, value.toLowerCase(), `${value.toLowerCase()}-desktop`])
   const candidates = path ? [path] : process.platform === 'darwin'
     ? appNames.flatMap(value => [`/Applications/${value}.app`, join(homedir(), `Applications/${value}.app`)])
     : binaries.flatMap(value => [join('/opt', name, value), join('/opt', id, value), join('/usr/bin', value), join('/usr/local/bin', value), join(homedir(), '.local/bin', value), ...(process.env.PATH || '').split(':').filter(Boolean).map(directory => join(directory, value))])
@@ -161,6 +162,7 @@ async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'no
   if (capability.fontFamily) args.push('-FontFamily', quote(settings.fontFamily))
   if (capability.fontSize) args.push('-FontSize', String(settings.fontSize))
   if (capability.maxWidth) args.push('-MaxWidth', quote(settings.maxWidth))
+  if (capability.chatHeight) args.push('-ChatHeight', quote(settings.chatHeight))
   if (capability.merge) args.push('-HideLocalMerge', String(Number(settings.hideLocalMerge)))
   if (capability.diff) args.push('-HideGitDiff', String(Number(settings.hideGitDiff)))
   if (capability.changes) args.push('-HideChanges', String(Number(settings.hideChanges)))

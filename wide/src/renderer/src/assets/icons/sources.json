@@ -7,6 +7,10 @@
     "source": "official website favicon",
     "url": "https://factory.com/favicon.svg"
   },
+  "dsh": {
+    "source": "installed application asset",
+    "originalPath": "D:/Program Files/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist/favicon.svg"
+  },
   "paseo": {
     "source": "installed application asset",
     "originalPath": "D:/Program Files/Paseo/resources/app-dist/pwa-icon-512.png"

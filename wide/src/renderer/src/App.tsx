@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical
 import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
 import codexIcon from './assets/icons/codex.png'
 import droidIcon from './assets/icons/droid.svg'
+import dshIcon from './assets/icons/dsh.svg'
 import paseoIcon from './assets/icons/paseo.png'
 import qoderIcon from './assets/icons/qoder.png'
 import workbuddyIcon from './assets/icons/workbuddy.png'
@@ -26,7 +27,8 @@ function applicationIcon(id: FeatureId, src: string): ComponentType<AppIconProps
 const FEATURES: { id: FeatureId; name: string; icon: ComponentType<AppIconProps> }[] = [
   { id: 'codex', name: 'Codex', icon: applicationIcon('codex', codexIcon) }, { id: 'droid', name: 'Droid', icon: applicationIcon('droid', droidIcon) },
   { id: 'paseo', name: 'Paseo', icon: applicationIcon('paseo', paseoIcon) }, { id: 'qoder', name: 'Qoder', icon: applicationIcon('qoder', qoderIcon) },
-  { id: 'workbuddy', name: 'WorkBuddy', icon: applicationIcon('workbuddy', workbuddyIcon) }, { id: 'zcode', name: 'ZCode', icon: applicationIcon('zcode', zcodeIcon) }
+  { id: 'workbuddy', name: 'WorkBuddy', icon: applicationIcon('workbuddy', workbuddyIcon) }, { id: 'dsh', name: 'DSH', icon: applicationIcon('dsh', dshIcon) },
+  { id: 'zcode', name: 'ZCode', icon: applicationIcon('zcode', zcodeIcon) }
 ]
 const SIZE_UNITS = ['%', 'vw', 'rem', 'px'] as const
 const BATCH_ACTION_LABELS: Record<BatchAction, string> = { start: '启动', restart: '重启', exit: '退出' }
@@ -101,7 +103,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.49')
+  const [version, setVersion] = useState('0.2.54')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -118,7 +120,7 @@ export default function App() {
   const menuRef = useRef<HTMLElement>(null)
   const menuDrag = useRef<{ id: FeatureId; pointerId: number; startX: number; startY: number; left: number; top: number; width: number; active: boolean } | null>(null)
   const dragClickBlocked = useRef(false)
-  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, qoder: 0, paseo: 0, appearance: 0, harness: 0, theme: 0, menuOrder: 0, startupMode: 0, openAtLogin: 0 })
+  const saveRevisions = useRef<Record<SaveDomain, number>>({ codex: 0, droid: 0, zcode: 0, workbuddy: 0, dsh: 0, qoder: 0, paseo: 0, appearance: 0, harness: 0, theme: 0, menuOrder: 0, startupMode: 0, openAtLogin: 0 })
   const saveErrorsRef = useRef<Partial<Record<SaveDomain, string>>>({})
   const desktop = !!window.wide
   const isAppSettings = active === 'settings'
@@ -463,6 +465,7 @@ export default function App() {
           </section>}
         </div> : isHarness ? <HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
           <section className="settings-group" aria-label="内容布局"><h2>布局</h2><div className="settings-list">
+            {capability.sidebarWidth && <DimensionControl id="sidebarWidth" label="左侧栏宽度" value={settings.sidebarWidth} fallback={defaults.sidebarWidth} disabled={disabled} error={errors.sidebarWidth} onChange={value => updateApplication('sidebarWidth', value)} />}
             <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateApplication('width', value)} />
             {capability.maxWidth && <DimensionControl id="maxWidth" label="最大宽度" value={settings.maxWidth} fallback={defaults.maxWidth} disabled={disabled} error={errors.maxWidth} onChange={value => updateApplication('maxWidth', value)} />}
             {capability.chatHeight && <SettingRow label="输入框高度" htmlFor="chatHeight" error={errors.chatHeight}><PixelControl id="chatHeight" min="0" max="9999" step="5" value={settings.chatHeight.endsWith('px') ? settings.chatHeight.slice(0, -2) : ''} placeholder={!settings.chatHeight.endsWith('px') ? settings.chatHeight : undefined} {...inputProps('chatHeight')} onChange={event => updateApplication('chatHeight', `${event.target.value}px`)} /></SettingRow>}

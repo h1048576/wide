@@ -8,7 +8,7 @@
     [int]$FontWeight = 300,
 
     [ValidateRange(1024, 65535)]
-    [int]$Port = 9335,
+    [int]$Port = 9337,
 
     [ValidateSet(0, 1)]
     [int]$HideLocalMerge = 1,

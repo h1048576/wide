@@ -18,7 +18,7 @@
     [string]$FontFamily = 'Cascadia Mono, LXGW WenKai Mono',
 
     [ValidateRange(1024, 65535)]
-    [int]$Port = 9335,
+    [int]$Port = 9336,
 
     [switch]$Normal,
 

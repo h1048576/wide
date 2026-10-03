@@ -1,10 +1,12 @@
 import { app } from 'electron'
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, DEFAULT_MENU_ORDER, MENU_ORDER_VERSION, normalizeMenuOrder, parseAppearance, parseHarnessSettings, parseSettings, type Preferences, type ApplicationPreferences } from '../shared/types'
+import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, DEFAULT_MENU_ORDER, MENU_ORDER_VERSION, APPLICATION_PORTS_VERSION, normalizeMenuOrder, parseAppearance, parseHarnessSettings, parseSettings, type Preferences, type ApplicationPreferences, type FeatureId } from '../shared/types'
+
+const LEGACY_APPLICATION_PORTS: Record<Exclude<FeatureId, 'codex'>, number> = { droid: 9335, zcode: 9332, workbuddy: 9333, dsh: 9337, qoder: 9334, paseo: 9336 }
 
 export class Store {
-  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, harness: { ...DEFAULT_HARNESS_SETTINGS }, startupMode: 'default', menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION }
+  preferences: Preferences = { applications: structuredClone(DEFAULT_APPLICATIONS), theme: 'system', appearance: { ...DEFAULT_APPEARANCE }, harness: { ...DEFAULT_HARNESS_SETTINGS }, startupMode: 'default', menuOrder: [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION, applicationPortsVersion: APPLICATION_PORTS_VERSION }
   warning?: string
   private queue: Promise<void> = Promise.resolve()
   private pending = 0
@@ -22,12 +24,19 @@ export class Store {
       }
       const data = JSON.parse(text)
       this.preferences = {
-        applications: Object.fromEntries(DEFAULT_MENU_ORDER.map(id => [id, parseSettings({ ...DEFAULT_APPLICATIONS[id], ...(data.applications?.[id] ?? (id === 'droid' ? data.droid : undefined)) }, id)])) as ApplicationPreferences,
+        applications: Object.fromEntries(DEFAULT_MENU_ORDER.map(id => {
+          const saved = data.applications?.[id] ?? (id === 'droid' ? data.droid : undefined)
+          const settings = { ...DEFAULT_APPLICATIONS[id], ...saved }
+          // 只迁移旧预设端口；Codex 和自定义端口保持原值。保存版本标记后不再重复迁移。
+          if (data.applicationPortsVersion !== APPLICATION_PORTS_VERSION && id !== 'codex' && saved?.port === LEGACY_APPLICATION_PORTS[id]) settings.port = DEFAULT_APPLICATIONS[id].port
+          return [id, parseSettings(settings, id)]
+        })) as ApplicationPreferences,
         theme: ['system', 'light', 'dark'].includes(data.theme) ? data.theme : 'system',
         startupMode: data.startupMode === 'maximized' ? 'maximized' : 'default',
         appearance: data.appearance === undefined ? { ...DEFAULT_APPEARANCE } : parseAppearance(data.appearance),
         harness: data.harness === undefined ? { ...DEFAULT_HARNESS_SETTINGS } : parseHarnessSettings({ ...DEFAULT_HARNESS_SETTINGS, ...data.harness }),
-        menuOrder: data.menuOrderVersion === MENU_ORDER_VERSION ? normalizeMenuOrder(data.menuOrder) : [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION
+        menuOrder: data.menuOrderVersion === MENU_ORDER_VERSION ? normalizeMenuOrder(data.menuOrder) : [...DEFAULT_MENU_ORDER], menuOrderVersion: MENU_ORDER_VERSION,
+        applicationPortsVersion: APPLICATION_PORTS_VERSION
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

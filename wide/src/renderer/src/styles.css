@@ -11,6 +11,7 @@ h1, h2, p { margin: 0; }
 svg { flex-shrink: 0; }
 .app-icon { display: block; flex-shrink: 0; object-fit: contain; user-select: none; -webkit-user-drag: none; }
 :root[data-theme='light'] .app-icon-codex { filter: invert(1); }
+:root[data-theme='dark'] .app-icon-dsh { filter: invert(1); }
 .app-icon-workbuddy { filter: grayscale(1); }
 .app-icon-droid { border-radius: 4px; }
 ::selection { background: var(--selection); }

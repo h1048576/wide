@@ -1,8 +1,11 @@
 import templates from './injection-templates.json'
 import type { ApplicationSettings, FeatureId } from '../shared/types'
+import { dshInjection } from './dsh-injection'
+import { workbuddySidebarInjection } from './workbuddy-sidebar-injection'
 
 // 模板沿用原脚本的选择器和页面守护，跨平台启动共用相同规则。
 export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: ApplicationSettings) {
+  if (id === 'dsh') return dshInjection(settings)
   const template = templates[id]
   const font = settings.fontFamily.split(',').map(name => {
     const value = name.trim().replace(/^['"]|['"]$/g, '')
@@ -21,5 +24,6 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
     if (!(key in values)) throw new Error(`未知注入参数：${key}`)
     return values[key]
   })
-  return template.source.replaceAll('$cssJson', JSON.stringify(css)).replaceAll('$PreventSummary', settings.preventSummary ? '1' : '0')
+  const source = template.source.replaceAll('$cssJson', JSON.stringify(css)).replaceAll('$PreventSummary', settings.preventSummary ? '1' : '0')
+  return id === 'workbuddy' ? `${source}\n${workbuddySidebarInjection(settings.sidebarWidth)}` : source
 }

@@ -1,4 +1,4 @@
-export type FeatureId = 'codex' | 'droid' | 'paseo' | 'qoder' | 'workbuddy' | 'zcode'
+export type FeatureId = 'codex' | 'droid' | 'dsh' | 'paseo' | 'qoder' | 'workbuddy' | 'zcode'
 export type Theme = 'system' | 'light' | 'dark'
 export type AppearanceMode = 'normal' | 'compact'
 export type StartupMode = 'default' | 'maximized'
@@ -8,6 +8,7 @@ export function parseStartupMode(input: unknown): StartupMode {
 }
 export interface DroidSettings {
   width: string
+  sidebarWidth: string
   maxWidth: string
   chatHeight: string
   fontFamily: string
@@ -31,7 +32,7 @@ export function parseHarnessSettings(input: unknown): HarnessSettings {
 }
 export type ApplicationSettings = DroidSettings
 export type ApplicationPreferences = Record<FeatureId, ApplicationSettings>
-export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; harness: HarnessSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number }
+export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; harness: HarnessSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number; applicationPortsVersion: number }
 export interface DroidInstallation { name: string; path: string; version: string }
 export type OperationLevel = 'info' | 'success' | 'error'
 export interface JobResult { success: boolean; message: string }
@@ -119,10 +120,17 @@ export interface WideApi {
   windowAction(action: 'minimize' | 'maximize' | 'close'): void
 }
 export const DEFAULT_APPEARANCE: AppearanceSettings = { fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, mode: 'compact' }
-export const DEFAULT_MENU_ORDER: FeatureId[] = ['codex', 'droid', 'zcode', 'workbuddy', 'qoder', 'paseo']
+export const DEFAULT_MENU_ORDER: FeatureId[] = ['codex', 'droid', 'zcode', 'workbuddy', 'dsh', 'qoder', 'paseo']
 export const MENU_ORDER_VERSION = 2
+export const APPLICATION_PORTS_VERSION = 1
+export const DEFAULT_APPLICATION_PORTS = Object.fromEntries(DEFAULT_MENU_ORDER.map((id, index) => [id, 9331 + index])) as Record<FeatureId, number>
 export function normalizeMenuOrder(input: unknown): FeatureId[] {
   const saved = Array.isArray(input) ? input.filter((id): id is FeatureId => DEFAULT_MENU_ORDER.includes(id)) : []
+  // 升级旧配置时将 DSH 插入 WorkBuddy 后面，保留已有应用的排序。
+  if (saved.length && !saved.includes('dsh')) {
+    const workbuddy = saved.indexOf('workbuddy'), qoder = saved.indexOf('qoder')
+    saved.splice(workbuddy >= 0 ? workbuddy + 1 : qoder >= 0 ? qoder : saved.length, 0, 'dsh')
+  }
   return [...new Set([...saved, ...DEFAULT_MENU_ORDER])]
 }
 export function parseMenuOrder(input: unknown): FeatureId[] {
@@ -146,25 +154,27 @@ export function parseAppearance(input: unknown): AppearanceSettings {
   return { fontFamily: value.fontFamily, fontSize: value.fontSize, mode: value.mode }
 }
 export const DEFAULT_DROID: DroidSettings = {
-  width: '70vw', maxWidth: '90rem', chatHeight: '80px',
+  width: '70vw', sidebarWidth: '15vw', maxWidth: '90rem', chatHeight: '80px',
   fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, fontWeight: 300,
-  hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, port: 9335, executablePath: ''
+  hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, port: DEFAULT_APPLICATION_PORTS.droid, executablePath: ''
 }
 export const APPLICATIONS = {
-  codex: { name: 'Codex', maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
-  droid: { name: 'Droid', maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  zcode: { name: 'ZCode', maxWidth: false, chatHeight: false, fontFamily: true, fontSize: false, merge: false, diff: false, changes: true, summary: false },
-  workbuddy: { name: 'WorkBuddy', maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  qoder: { name: 'Qoder', maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  paseo: { name: 'Paseo', maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
+  codex: { name: 'Codex', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
+  droid: { name: 'Droid', sidebarWidth: false, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  zcode: { name: 'ZCode', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: false, merge: false, diff: false, changes: true, summary: false },
+  workbuddy: { name: 'WorkBuddy', sidebarWidth: true, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  dsh: { name: 'DSH', sidebarWidth: true, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  qoder: { name: 'Qoder', sidebarWidth: false, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  paseo: { name: 'Paseo', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
 } satisfies Record<FeatureId, object>
 export const DEFAULT_APPLICATIONS: ApplicationPreferences = {
-  codex: { ...DEFAULT_DROID, fontWeight: 100, preventSummary: true, port: 9331 },
+  codex: { ...DEFAULT_DROID, fontWeight: 100, preventSummary: true, port: DEFAULT_APPLICATION_PORTS.codex },
   droid: { ...DEFAULT_DROID },
-  zcode: { ...DEFAULT_DROID, hideChanges: true, port: 9332 },
-  workbuddy: { ...DEFAULT_DROID, fontWeight: 200, port: 9333 },
-  qoder: { ...DEFAULT_DROID, port: 9334 },
-  paseo: { ...DEFAULT_DROID, hideLocalMerge: true, hideGitDiff: true, port: 9336 }
+  zcode: { ...DEFAULT_DROID, hideChanges: true, port: DEFAULT_APPLICATION_PORTS.zcode },
+  workbuddy: { ...DEFAULT_DROID, fontWeight: 200, port: DEFAULT_APPLICATION_PORTS.workbuddy },
+  dsh: { ...DEFAULT_DROID, port: DEFAULT_APPLICATION_PORTS.dsh },
+  qoder: { ...DEFAULT_DROID, port: DEFAULT_APPLICATION_PORTS.qoder },
+  paseo: { ...DEFAULT_DROID, hideLocalMerge: true, hideGitDiff: true, port: DEFAULT_APPLICATION_PORTS.paseo }
 }
 export function parseFeatureId(input: unknown): FeatureId {
   if (typeof input !== 'string' || !DEFAULT_MENU_ORDER.includes(input as FeatureId)) throw new Error('应用标识无效')
@@ -173,10 +183,12 @@ export function parseFeatureId(input: unknown): FeatureId {
 const size = '(?:0|[1-9][0-9]{0,3})(?:\\.[0-9]+)?'
 const widthPattern = new RegExp(`^(?:auto|fit-content|${size}(?:px|rem|em|vw|vh|%))$`)
 const maxPattern = new RegExp(`^(?:none|${size}(?:px|rem|em|vw|vh|%))$`)
+const sidebarPattern = new RegExp(`^${size}(?:px|rem|em|vw|vh|%)$`)
 const heightPattern = new RegExp(`^(?:auto|${size}(?:px|rem|em|vh|%))$`)
 export function settingsErrors(value: DroidSettings): Partial<Record<keyof DroidSettings, string>> {
   const errors: Partial<Record<keyof DroidSettings, string>> = {}
   if (!widthPattern.test(value.width)) errors.width = '请输入有效宽度，例如 70vw、80% 或 1200px'
+  if (!sidebarPattern.test(value.sidebarWidth)) errors.sidebarWidth = '请输入有效侧栏宽度，例如 15vw、15% 或 280px'
   if (!maxPattern.test(value.maxWidth)) errors.maxWidth = '请输入有效最大宽度，例如 90rem 或 1200px'
   if (!heightPattern.test(value.chatHeight)) errors.chatHeight = '请输入有效高度，例如 80px'
   if (!Number.isInteger(value.fontSize) || value.fontSize < 8 || value.fontSize > 72) errors.fontSize = '字号须为 8–72 的整数'
@@ -190,7 +202,8 @@ export function settingsErrors(value: DroidSettings): Partial<Record<keyof Droid
 }
 export function parseSettings(input: unknown, id: FeatureId = 'droid'): DroidSettings {
   if (!input || typeof input !== 'object') throw new Error('设置格式无效')
-  const value = input as Record<string, unknown>
+  // 旧版本尚未保存侧栏字段；独立保存或启动时也兼容缺失的新设置。
+  const value = { sidebarWidth: DEFAULT_APPLICATIONS[id].sidebarWidth, ...input } as Record<string, unknown>
   for (const [key, fallback] of Object.entries(DEFAULT_DROID)) {
     if (typeof value[key] !== typeof fallback) throw new Error(`设置 ${key} 的类型无效`)
   }
