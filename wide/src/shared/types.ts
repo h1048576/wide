@@ -38,7 +38,7 @@ export type OperationLevel = 'info' | 'success' | 'error'
 export interface JobResult { success: boolean; message: string }
 export type BatchAction = 'start' | 'restart' | 'exit'
 export interface BatchApplicationResult { id: FeatureId; status: 'success' | 'skipped' | 'error'; message: string; skipReason?: 'not-installed' | 'already-running' }
-export interface BatchProgress { action: BatchAction; currentId: FeatureId | null; completed: number; total: number; results: BatchApplicationResult[] }
+export interface BatchProgress { action: BatchAction; currentIds: FeatureId[]; completed: number; total: number; results: BatchApplicationResult[] }
 export interface BatchResult extends JobResult { action: BatchAction; results: BatchApplicationResult[] }
 export type HarnessId = 'claude' | 'agents' | 'droid' | 'codex'
 export const HARNESSES: { id: HarnessId; name: string; directory: string }[] = [
@@ -94,7 +94,7 @@ export interface WideApi {
   chooseExecutable(id: FeatureId): Promise<string | null>
   run(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings): Promise<JobResult>
   quit(id: FeatureId, path: string): Promise<JobResult>
-  runAll(action: BatchAction): Promise<BatchResult>
+  runAll(action: BatchAction, ids?: FeatureId[]): Promise<BatchResult>
   harnessInventory(): Promise<HarnessInventory>
   harnessSkillsInventory(): Promise<HarnessFolder[]>
   harnessPreviewAgents(): Promise<HarnessDocument>

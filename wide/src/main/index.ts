@@ -5,10 +5,8 @@ import { detectApplication, disposeApplications, runApplication, quitApplication
 import { Store } from './store'
 import { runAllApplications } from './application-batch'
 import { HarnessManager } from './harness'
-import { ModelsManager } from './models'
-import { McpsManager } from './mcps'
 import { StartupManager } from './startup'
-import { APPLICATIONS, parseAppearance, parseHarnessSettings, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type OperationLevel, type Theme } from '../shared/types'
+import { APPLICATIONS, parseAppearance, parseHarnessSettings, parseFeatureId, parseMenuOrder, parseSettings, parseStartupMode, type FeatureId, type OperationLevel, type Theme } from '../shared/types'
 
 let window: BrowserWindow | null = null
 let busy = false
@@ -17,11 +15,17 @@ let closingAfterSave = false
 const store = new Store()
 const startup = new StartupManager()
 const harness = new HarnessManager()
-const models = new ModelsManager(undefined, join(app.getPath('userData'), 'model-backups'))
-const mcps = new McpsManager(undefined, join(app.getPath('userData'), 'mcp-backups'), {
-  ...(process.env.CLAUDE_CONFIG_DIR ? { claude: join(process.env.CLAUDE_CONFIG_DIR, '.claude.json') } : {}),
-  ...(process.env.CODEX_HOME ? { codex: join(process.env.CODEX_HOME, 'config.toml') } : {})
-})
+let models: Promise<import('./models').ModelsManager> | undefined
+let mcps: Promise<import('./mcps').McpsManager> | undefined
+function getModels() {
+  return models ??= import('./models').then(({ ModelsManager }) => new ModelsManager(undefined, join(app.getPath('userData'), 'model-backups'))).catch(error => { models = undefined; throw error })
+}
+function getMcps() {
+  return mcps ??= import('./mcps').then(({ McpsManager }) => new McpsManager(undefined, join(app.getPath('userData'), 'mcp-backups'), {
+    ...(process.env.CLAUDE_CONFIG_DIR ? { claude: join(process.env.CLAUDE_CONFIG_DIR, '.claude.json') } : {}),
+    ...(process.env.CODEX_HOME ? { codex: join(process.env.CODEX_HOME, 'config.toml') } : {})
+  })).catch(error => { mcps = undefined; throw error })
+}
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 const rendererFile = join(__dirname, '../renderer/index.html')
 const rendererUrl = isDev ? process.env.ELECTRON_RENDERER_URL! : pathToFileURL(rendererFile).href
@@ -46,19 +50,19 @@ function registerIPC() {
   handle('wide:harness-sync-agents', () => harnessMutation(() => harness.syncAgents()))
   handle('wide:harness-sync-skills', (source: unknown, skillId: unknown) => harnessMutation(() => harness.syncSkills(source, skillId)))
   handle('wide:harness-delete-skills', (id: unknown, skillId: unknown) => harnessMutation(() => harness.deleteSkills(id, skillId)))
-  handle('wide:models-inventory', () => models.inventory())
-  handle('wide:model-detail', (target: unknown) => models.detail(target))
-  handle('wide:model-preview', (sourceId: unknown) => models.preview(sourceId))
-  handle('wide:model-save', (change: unknown) => harnessMutation(() => models.save(change)))
-  handle('wide:model-delete', (target: unknown) => harnessMutation(() => models.delete(target)))
-  handle('wide:model-reorder', (order: unknown) => harnessMutation(() => models.reorder(order)))
-  handle('wide:model-batch', (change: unknown) => harnessMutation(() => models.batch(change)))
-  handle('wide:mcps-inventory', () => mcps.inventory())
-  handle('wide:mcps-refresh', (id: unknown) => mcps.source(id))
-  handle('wide:mcp-detail', (target: unknown) => mcps.detail(target))
-  handle('wide:mcp-preview', (id: unknown) => mcps.preview(id))
-  handle('wide:mcp-save', (change: unknown) => harnessMutation(() => mcps.save(change)))
-  handle('wide:mcp-delete', (target: unknown) => harnessMutation(() => mcps.delete(target)))
+  handle('wide:models-inventory', async () => (await getModels()).inventory())
+  handle('wide:model-detail', async (target: unknown) => (await getModels()).detail(target))
+  handle('wide:model-preview', async (sourceId: unknown) => (await getModels()).preview(sourceId))
+  handle('wide:model-save', (change: unknown) => harnessMutation(async () => (await getModels()).save(change)))
+  handle('wide:model-delete', (target: unknown) => harnessMutation(async () => (await getModels()).delete(target)))
+  handle('wide:model-reorder', (order: unknown) => harnessMutation(async () => (await getModels()).reorder(order)))
+  handle('wide:model-batch', (change: unknown) => harnessMutation(async () => (await getModels()).batch(change)))
+  handle('wide:mcps-inventory', async () => (await getMcps()).inventory())
+  handle('wide:mcps-refresh', async (id: unknown) => (await getMcps()).source(id))
+  handle('wide:mcp-detail', async (target: unknown) => (await getMcps()).detail(target))
+  handle('wide:mcp-preview', async (id: unknown) => (await getMcps()).preview(id))
+  handle('wide:mcp-save', (change: unknown) => harnessMutation(async () => (await getMcps()).save(change)))
+  handle('wide:mcp-delete', (target: unknown) => harnessMutation(async () => (await getMcps()).delete(target)))
   handle('wide:save', async (feature: unknown, input: unknown) => {
     const id = parseFeatureId(feature)
     const settings = parseSettings(input, id)
@@ -152,15 +156,20 @@ function registerIPC() {
       if (quitting) app.quit()
     }
   })
-  handle('wide:run-all', async (action: unknown) => {
+  handle('wide:run-all', async (action: unknown, input: unknown) => {
     if (action !== 'start' && action !== 'restart' && action !== 'exit') throw new Error('全局操作无效')
+    let ids: FeatureId[] | undefined
+    if (input !== undefined) {
+      if (!Array.isArray(input) || !input.length) throw new Error('请选择要操作的应用')
+      ids = input.map(parseFeatureId)
+    }
     if (busy) throw new Error('应用操作正在执行，请稍后再试。')
     busy = true
     try {
       // 退出仍使用最后成功保存的设置，避免字体等设置保存失败时无法退出应用。
       await store.flush().catch(error => { if (action !== 'exit') throw error })
       return await runAllApplications(action, store.preferences,
-        progress => { if (window && !window.isDestroyed()) window.webContents.send('wide:batch-progress', progress) })
+        progress => { if (window && !window.isDestroyed()) window.webContents.send('wide:batch-progress', progress) }, ids)
     } finally {
       busy = false
       if (quitting) app.quit()

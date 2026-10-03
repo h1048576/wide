@@ -1,6 +1,6 @@
 {
   "name": "wide",
-  "version": "0.2.54",
+  "version": "0.2.58",
   "description": "AI 桌面应用的界面调整工具",
   "private": true,
   "main": "out/main/index.js",
@@ -48,7 +48,11 @@
     "files": [
       "out/**/*",
       "build/icon.png",
-      "package.json"
+      "package.json",
+      "!node_modules/lucide-react/**/*",
+      "!node_modules/react/**/*",
+      "!node_modules/react-dom/**/*",
+      "!node_modules/scheduler/**/*"
     ],
     "extraResources": [
       {
@@ -84,6 +88,12 @@
         },
         {
           "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "x64"
           ]

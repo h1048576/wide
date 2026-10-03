@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical, LogOut, Maximize2, Minus, Monitor, PanelLeft, Play, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal, X } from 'lucide-react'
 import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
 import codexIcon from './assets/icons/codex.png'
@@ -9,11 +9,12 @@ import qoderIcon from './assets/icons/qoder.png'
 import workbuddyIcon from './assets/icons/workbuddy.png'
 import zcodeIcon from './assets/icons/zcode.png'
 import { FontControl, SelectControl } from './DropdownControl'
-import HarnessPage from './HarnessPage'
 import { ModelDialog } from './ModelDialog'
 
+const HarnessPage = lazy(() => import('./HarnessPage'))
+
 type MenuId = FeatureId | 'settings' | 'start' | 'harness'
-type BusyOperation = { id: FeatureId; action: 'apply' | 'normal' | 'exit' } | { id: 'all'; action: BatchAction } | { id: 'harness'; action: 'manage' }
+type BusyOperation = { id: FeatureId; action: 'apply' | 'normal' | 'exit' } | { id: 'all'; action: BatchAction; scope: 'all' | 'selected' } | { id: 'harness'; action: 'manage' }
 type SaveDomain = FeatureId | 'appearance' | 'harness' | 'theme' | 'menuOrder' | 'startupMode' | 'openAtLogin'
 type RestoreConfirmation = { action: 'presets' | 'normal'; target: FeatureId | 'settings'; returnFocus: HTMLElement | null }
 type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean }
@@ -62,7 +63,7 @@ function PixelControl(props: InputHTMLAttributes<HTMLInputElement>) {
 }
 
 export default function App() {
-  const [active, setActive] = useState<MenuId>('codex')
+  const [active, setActive] = useState<MenuId>('start')
   const activeRef = useRef(active)
   activeRef.current = active
   const [query, setQuery] = useState('')
@@ -92,6 +93,7 @@ export default function App() {
   const [busy, setBusy] = useState<BusyOperation | null>(null)
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null)
   const [batchError, setBatchError] = useState('')
+  const [selectedApplications, setSelectedApplications] = useState<FeatureId[]>([])
   const [advanced, setAdvanced] = useState(false)
   const [detections, setDetections] = useState<Record<string, Detection>>({})
   const detectionCache = useRef(new Map<string, Detection>())
@@ -103,7 +105,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.54')
+  const [version, setVersion] = useState('0.2.58')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -204,8 +206,8 @@ export default function App() {
         if (!settingsErrors(value).executablePath) await requestDetection(id, value, false)
       }
     }
-    // 后台最多两个检测任务，避免同时创建六个 PowerShell 进程。
-    void preload(); void preload()
+    // 三个后台检测任务，与当前页面的检测并行；复用同一应用的在途请求。
+    void preload(); void preload(); void preload()
     return () => { cancelled = true }
   }, [ready, desktop, bootError])
   useEffect(() => {
@@ -362,15 +364,17 @@ export default function App() {
     } catch (error) { setNotice({ text: messageOf(error), error: true }) }
     finally { setBusy(null) }
   }
-  async function runAll(action: BatchAction) {
+  async function runAll(action: BatchAction, ids?: FeatureId[]) {
     if (!window.wide || disabled) return
-    setBusy({ id: 'all', action }); setNotice(null); setBatchError('')
-    setBatchProgress({ action, currentId: null, completed: 0, total: menuOrder.length, results: [] })
+    const order = currentMenuOrder.current.filter(id => !ids || ids.includes(id))
+    if (!order.length) return
+    setBusy({ id: 'all', action, scope: ids ? 'selected' : 'all' }); setNotice(null); setBatchError('')
+    setBatchProgress({ action, currentIds: [], completed: 0, total: order.length, results: [] })
     try {
       await Promise.all([...pending.current])
       if (action !== 'exit' && Object.values(saveErrorsRef.current).length) throw new Error('自动保存失败，请修正设置后再执行全局操作。')
-      const result = await window.wide.runAll(action)
-      setBatchProgress({ action, currentId: null, completed: result.results.length, total: menuOrder.length, results: result.results })
+      const result = await window.wide.runAll(action, ids ? order : undefined)
+      setBatchProgress({ action, currentIds: [], completed: result.results.length, total: order.length, results: result.results })
     } catch (error) { setBatchProgress(null); setBatchError(messageOf(error)) }
     finally { setBusy(null) }
   }
@@ -415,6 +419,7 @@ export default function App() {
       <div className={`brand-bar ${platform === 'darwin' ? 'mac-brand' : ''}`}><Maximize2 size={22} />{!collapsed && <span>wide</span>}<button className="icon-button collapse-toggle" title={collapsed ? '展开菜单' : '收起菜单'} aria-label={collapsed ? '展开菜单' : '收起菜单'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><PanelLeft size={18} strokeWidth={1.6} aria-hidden="true" /></button></div>
       {!collapsed && <div className="sidebar-search"><Search size={15} /><input aria-label="搜索功能" placeholder="搜索功能" value={query} onChange={event => setQuery(event.target.value)} />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery('')}><X size={12} /></button>}</div>}
       <div className="sidebar-navigation">
+      {(visibleStart || visibleHarness) && <><div className="menu-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu">{visibleStart && <button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button>}{visibleHarness && <button className={`feature-item ${isHarness ? 'selected' : ''}`} aria-label="Harness" aria-current={isHarness ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button>}</nav></>}
       {(visibleFeatures.length > 0 || !query) && <div className="menu-section-label">应用</div>}
       <nav ref={menuRef} aria-label="应用菜单" className={`feature-menu ${dragging ? 'menu-dragging' : ''}`}>
         {visibleFeatures.map(({ id, name, icon: Icon }) => <button key={id}
@@ -436,7 +441,6 @@ export default function App() {
           {!collapsed && <><span>{name}</span></>}
         </button>)}
       </nav>
-      {(visibleStart || visibleHarness) && <><div className="menu-section-label global-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu">{visibleStart && <button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button>}{visibleHarness && <button className={`feature-item ${isHarness ? 'selected' : ''}`} aria-label="Harness" aria-current={isHarness ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button>}</nav></>}
       {!collapsed && !visibleFeatures.length && !visibleStart && !visibleHarness && <p className="search-empty">没有匹配的功能</p>}
       </div>
       <span className="sr-only" role="status" aria-live="polite">{menuAnnouncement}</span>
@@ -451,19 +455,35 @@ export default function App() {
         <div className="page-header"><div className="page-title-group"><PageIcon size={26} strokeWidth={1.6} /><h1>{title}</h1></div>{isApplication && <div className="page-header-actions"><button className="button primary start-button" disabled={!desktop || disabled || invalid || missingInstallation} onClick={() => { void run('apply') }}>{currentOperation === 'apply' ? <RefreshCw size={15} className="spin" /> : <Play size={15} fill="currentColor" />}{currentOperation === 'apply' ? '启动中…' : '启动'}</button><button className="button secondary start-button" disabled={!desktop || disabled || !!errors.executablePath || missingInstallation} title={`完整退出 ${title}`} onClick={() => { void run('exit') }}>{currentOperation === 'exit' ? <RefreshCw size={15} className="spin" /> : <LogOut size={15} />}{currentOperation === 'exit' ? '退出中…' : '退出'}</button></div>}</div>
         {isGlobal ? <div className="settings-page global-page">
           <section className="settings-group" aria-label="全局应用操作"><h2>应用</h2><div className="settings-list">
-            <SettingRow label="启动所有"><button className="button primary global-action-button" disabled={!desktop || disabled} onClick={() => { void runAll('start') }}>{busy?.id === 'all' && busy.action === 'start' ? <RefreshCw size={15} className="spin" /> : <Play size={15} fill="currentColor" />}{busy?.id === 'all' && busy.action === 'start' ? '启动中…' : '启动所有'}</button></SettingRow>
-            <SettingRow label="重启所有"><button className="button primary global-action-button" disabled={!desktop || disabled} onClick={() => { void runAll('restart') }}><RefreshCw size={15} className={busy?.id === 'all' && busy.action === 'restart' ? 'spin' : undefined} />{busy?.id === 'all' && busy.action === 'restart' ? '重启中…' : '重启所有'}</button></SettingRow>
-            <SettingRow label="退出所有"><button className="button primary global-action-button" disabled={!desktop || disabled} onClick={() => { void runAll('exit') }}>{busy?.id === 'all' && busy.action === 'exit' ? <RefreshCw size={15} className="spin" /> : <LogOut size={15} />}{busy?.id === 'all' && busy.action === 'exit' ? '退出中…' : '退出所有'}</button></SettingRow>
+            {(['start', 'restart', 'exit'] as const).map(action => {
+              const label = BATCH_ACTION_LABELS[action]
+              const ActionIcon = action === 'start' ? Play : action === 'restart' ? RefreshCw : LogOut
+              const running = busy?.id === 'all' && busy.action === action
+              const runningAll = running && busy.scope === 'all'
+              const runningSelected = running && busy.scope === 'selected'
+              return <SettingRow key={action} label={label}><div className="global-action-buttons">
+                  <button className="button primary global-action-button" aria-label={`${label}选中的 harness`} disabled={!desktop || disabled || !selectedApplications.length} onClick={() => { void runAll(action, selectedApplications) }}>{runningSelected ? <RefreshCw size={15} className="spin" /> : <ActionIcon size={15} fill={action === 'start' ? 'currentColor' : 'none'} />}{runningSelected ? `${label}中…` : '选中'}</button>
+                  <button className="button primary global-action-button" aria-label={`${label}所有 harness`} disabled={!desktop || disabled} onClick={() => { void runAll(action) }}>{runningAll ? <RefreshCw size={15} className="spin" /> : <ActionIcon size={15} fill={action === 'start' ? 'currentColor' : 'none'} />}{runningAll ? `${label}中…` : '所有'}</button>
+                </div></SettingRow>
+            })}
+                <div className="setting-row global-selection-row" role="group" aria-label="选择要启动、重启或退出的 harness"><div className="global-application-options">{menuOrder.map(id => {
+                  const item = FEATURES.find(feature => feature.id === id)!
+                  const ApplicationIcon = item.icon
+                  return <label className="global-application-option" key={id}><input type="checkbox" checked={selectedApplications.includes(id)} disabled={disabled} onChange={event => {
+                    const checked = event.target.checked
+                    setSelectedApplications(current => checked ? [...current, id] : current.filter(selectedId => selectedId !== id))
+                  }} /><ApplicationIcon size={16} /><span>{item.name}</span></label>
+                })}</div></div>
           </div></section>
           {batchError && <div className="error-banner" role="alert">{batchError}</div>}
           {batchProgress && <section className="settings-group" aria-label="全局操作结果"><h2>{busy?.id === 'all' ? '进行中' : '处理结果'}</h2>
-            {busy?.id === 'all' && <div className="batch-progress" role="status" aria-live="polite"><div><RefreshCw size={15} className="spin" /><span>{batchProgress.currentId ? `正在${BATCH_ACTION_LABELS[batchProgress.action]} ${APPLICATIONS[batchProgress.currentId].name}…` : batchProgress.completed === batchProgress.total ? '正在完成…' : '准备中…'}</span><span className="batch-count">{batchProgress.completed} / {batchProgress.total}</span></div><progress value={batchProgress.completed} max={batchProgress.total} aria-label="全局操作进度" /></div>}
+            {busy?.id === 'all' && <div className="batch-progress" role="status" aria-live="polite"><div><RefreshCw size={15} className="spin" /><span>{batchProgress.currentIds.length ? `正在${BATCH_ACTION_LABELS[batchProgress.action]} ${batchProgress.currentIds.map(id => APPLICATIONS[id].name).join('、')}…` : batchProgress.completed === batchProgress.total ? '正在完成…' : '准备中…'}</span><span className="batch-count">{batchProgress.completed} / {batchProgress.total}</span></div><progress value={batchProgress.completed} max={batchProgress.total} aria-label="全局操作进度" /></div>}
             {batchProgress.results.length > 0 && <div className="settings-list batch-results">{batchProgress.results.map(result => {
               const ResultIcon = FEATURES.find(item => item.id === result.id)!.icon
               return <div className={`batch-result setting-row ${result.status}`} key={result.id}><div className="batch-app-name"><ResultIcon size={20} /><span>{APPLICATIONS[result.id].name}</span></div><span className="batch-result-message">{result.message}</span></div>
             })}</div>}
           </section>}
-        </div> : isHarness ? <HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
+        </div> : isHarness ? <Suspense fallback={<p className="operation-note" role="status">正在加载 Harness…</p>}><HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /></Suspense> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
           <section className="settings-group" aria-label="内容布局"><h2>布局</h2><div className="settings-list">
             {capability.sidebarWidth && <DimensionControl id="sidebarWidth" label="左侧栏宽度" value={settings.sidebarWidth} fallback={defaults.sidebarWidth} disabled={disabled} error={errors.sidebarWidth} onChange={value => updateApplication('sidebarWidth', value)} />}
             <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateApplication('width', value)} />

@@ -1,24 +1,29 @@
 import { detectApplication, isApplicationRunning, quitApplication, runApplication } from './applications'
-import { normalizeMenuOrder, type BatchAction, type BatchApplicationResult, type BatchProgress, type BatchResult, type OperationLevel, type Preferences } from '../shared/types'
+import { normalizeMenuOrder, type BatchAction, type BatchApplicationResult, type BatchProgress, type BatchResult, type FeatureId, type OperationLevel, type Preferences } from '../shared/types'
 
 let batchRevision = 0
+const BATCH_CONCURRENCY = 3
 
-export async function runAllApplications(action: BatchAction, preferences: Preferences, onProgress: (progress: BatchProgress) => void): Promise<BatchResult> {
+export async function runAllApplications(action: BatchAction, preferences: Preferences, onProgress: (progress: BatchProgress) => void, ids?: FeatureId[]): Promise<BatchResult> {
   const revision = ++batchRevision
   const snapshot = structuredClone(preferences)
-  const order = normalizeMenuOrder(snapshot.menuOrder)
-  const results: BatchApplicationResult[] = []
-  let currentId: BatchProgress['currentId'] = null
-  const publish = (id = currentId) => {
-    currentId = id
-    onProgress({ action, currentId, completed: results.length, total: order.length, results: results.map(result => ({ ...result })) })
+  const order = normalizeMenuOrder(snapshot.menuOrder).filter(id => !ids || ids.includes(id))
+  const resultsById = new Map<FeatureId, BatchApplicationResult>()
+  const activeIds = new Set<FeatureId>()
+  const orderedResults = () => order.flatMap(id => {
+    const result = resultsById.get(id)
+    return result ? [{ ...result }] : []
+  })
+  const publish = () => {
+    onProgress({ action, currentIds: order.filter(id => activeIds.has(id)), completed: resultsById.size, total: order.length, results: orderedResults() })
   }
 
   const completedText = { start: '已启动', restart: '已重启', exit: '已退出' }[action]
 
-  // 按菜单顺序逐个执行，单个应用失败后仍继续处理其余应用。
-  for (const id of order) {
-    publish(id)
+  // 按菜单顺序分配任务；不同应用并发，同一应用的退出、启动仍顺序执行。
+  const processApplication = async (id: FeatureId) => {
+    activeIds.add(id)
+    publish()
     const settings = snapshot.applications[id]
     let failureDetail = ''
     let operationRunning = true
@@ -27,26 +32,35 @@ export async function runAllApplications(action: BatchAction, preferences: Prefe
       if (operationRunning) failureDetail = message.replace(/^失败：/, '')
       else if (revision === batchRevision) {
         // 后台连接的错误也更新页面内结果，批量操作不发送弹出通知。
-        const result = results.find(item => item.id === id)
+        const result = resultsById.get(id)
         if (result) { result.status = 'error'; result.message = message; publish() }
       }
     }
     try {
       const installation = await detectApplication(id, settings.executablePath, true)
       if (!installation) {
-        results.push({ id, status: 'skipped', skipReason: 'not-installed', message: '未安装，已跳过' })
+        resultsById.set(id, { id, status: 'skipped', skipReason: 'not-installed', message: '未安装，已跳过' })
       } else if (action === 'start' && await isApplicationRunning(id, installation)) {
-        results.push({ id, status: 'skipped', skipReason: 'already-running', message: '已运行，已跳过' })
+        resultsById.set(id, { id, status: 'skipped', skipReason: 'already-running', message: '已运行，已跳过' })
       } else {
         if (action === 'restart' || action === 'exit') await quitApplication(id, settings.executablePath)
         if (action !== 'exit') await runApplication(id, 'apply', settings, report, snapshot.startupMode)
-        results.push({ id, status: 'success', message: completedText })
+        resultsById.set(id, { id, status: 'success', message: completedText })
       }
     } catch (error) {
-      results.push({ id, status: 'error', message: failureDetail || (error instanceof Error ? error.message : String(error)) })
-    } finally { operationRunning = false }
+      resultsById.set(id, { id, status: 'error', message: failureDetail || (error instanceof Error ? error.message : String(error)) })
+    } finally { operationRunning = false; activeIds.delete(id); publish() }
   }
-  publish(null)
+  const queue = [...order]
+  await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, queue.length) }, async () => {
+    for (;;) {
+      const id = queue.shift()
+      if (!id) return
+      await processApplication(id)
+    }
+  }))
+  publish()
+  const results = orderedResults()
   const succeeded = results.filter(result => result.status === 'success').length
   const alreadyRunning = results.filter(result => result.skipReason === 'already-running').length
   const notInstalled = results.filter(result => result.skipReason === 'not-installed').length
