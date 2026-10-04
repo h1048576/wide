@@ -1,7 +1,7 @@
 {
   "name": "wide",
-  "version": "0.2.58",
-  "description": "AI 桌面应用的界面调整工具",
+  "version": "0.2.63",
+  "description": "wide",
   "private": true,
   "main": "out/main/index.js",
   "author": "wide",

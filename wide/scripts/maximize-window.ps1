@@ -3,8 +3,8 @@
     [string]$ExecutablePath,
     [ValidateSet('', 'codex', 'droid', 'zcode', 'workbuddy', 'dsh', 'qoder', 'paseo')]
     [string]$ApplicationId = '',
-    [ValidateRange(1, 20)]
-    [int]$Seconds = 15
+    [ValidateRange(1, 60)]
+    [int]$Seconds = 45
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +32,8 @@ namespace Wide {
         [DllImport("user32.dll")]
         private static extern bool IsZoomed(IntPtr window);
         [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr window);
+        [DllImport("user32.dll")]
         private static extern bool ShowWindowAsync(IntPtr window, int command);
 
         public static bool Maximize(int[] processIds) {
@@ -46,7 +48,7 @@ namespace Wide {
                     GetWindow(window, 4) != IntPtr.Zero ||
                     (GetWindowLong(window, -16) & 0x00010000) == 0) return true;
                 matched++;
-                if (!IsZoomed(window)) {
+                if (!IsZoomed(window) || IsIconic(window)) {
                     ShowWindowAsync(window, 3);
                     complete = false;
                 }

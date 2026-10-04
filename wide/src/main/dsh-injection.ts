@@ -1,4 +1,5 @@
 import type { ApplicationSettings } from '../shared/types'
+import { terminalInjection } from './terminal-injection'
 
 // 官方桌面版以插件渲染对话；使用公开的布局变量和 data 标记，避免依赖构建后的类名。
 export function dshInjection(settings: ApplicationSettings) {
@@ -33,7 +34,7 @@ export function dshInjection(settings: ApplicationSettings) {
       --dsh-content-font-delta: ${settings.fontSize - 14}px !important;
       --dsh-content-font-delta-secondary: ${settings.fontSize - 13}px !important;
     }
-    :root, body, body * {
+    :root, body, body *:not(.xterm, .xterm *) {
       font-family: ${font} !important;
       font-size: ${settings.fontSize}px !important;
       font-weight: ${settings.fontWeight} !important;
@@ -63,6 +64,7 @@ export function dshInjection(settings: ApplicationSettings) {
         (document.head || document.documentElement).appendChild(style);
       }
       style.textContent = ${JSON.stringify(css)};
+      ${terminalInjection('dsh', settings)};
       // 原生框架将三列宽度写到内联样式；只替换左列，随原生渲染同步中列和右列。
       const syncLayout = () => {
         for (const rightbar of document.querySelectorAll('[data-rightbar-col]')) {

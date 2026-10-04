@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical, LogOut, Maximize2, Minus, Monitor, PanelLeft, Play, RefreshCw, RotateCcw, Search, Settings2, SlidersHorizontal, X } from 'lucide-react'
+import { Activity, lazy, Suspense, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
+import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical, LogOut, Maximize2, Minus, Monitor, PanelLeft, Play, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, X } from 'lucide-react'
 import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
 import codexIcon from './assets/icons/codex.png'
 import droidIcon from './assets/icons/droid.svg'
@@ -66,7 +66,6 @@ export default function App() {
   const [active, setActive] = useState<MenuId>('start')
   const activeRef = useRef(active)
   activeRef.current = active
-  const [query, setQuery] = useState('')
   const [collapsed, setCollapsed] = useState(false)
   const [menuOrder, setMenuOrder] = useState<FeatureId[]>(() => [...DEFAULT_MENU_ORDER])
   const [dragging, setDragging] = useState<FeatureId | null>(null)
@@ -95,17 +94,17 @@ export default function App() {
   const [batchError, setBatchError] = useState('')
   const [selectedApplications, setSelectedApplications] = useState<FeatureId[]>([])
   const [advanced, setAdvanced] = useState(false)
-  const [detections, setDetections] = useState<Record<string, Detection>>({})
+  const [, setDetectionRevision] = useState(0)
   const detectionCache = useRef(new Map<string, Detection>())
   const detectionRequests = useRef(new Map<string, Promise<void>>())
-  const detection = detections[detectionKey(applicationId, settings)]
+  const detection = detectionCache.current.get(detectionKey(applicationId, settings))
   const installation = detection?.installation ?? null
   const detecting = detection?.checking ?? false
   const detectionError = detection?.error ?? ''
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.58')
+  const [version, setVersion] = useState('0.2.63')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -137,9 +136,7 @@ export default function App() {
   const invalid = Object.keys(errors).length > 0
   const disabled = !!busy || !ready || !!bootError
   const dark = theme === 'dark' || theme === 'system' && systemDark
-  const visibleFeatures = menuOrder.map(id => FEATURES.find(item => item.id === id)!).filter(item => collapsed || item.name.toLowerCase().includes(query.toLowerCase()))
-  const visibleStart = collapsed || '全局 开始 启动所有 退出所有'.includes(query.trim().toLowerCase())
-  const visibleHarness = collapsed || '全局 harness agents.md claude skills models mcps 技能 模型 配置'.includes(query.trim().toLowerCase())
+  const orderedFeatures = menuOrder.map(id => FEATURES.find(item => item.id === id)!)
   const draggedFeature = FEATURES.find(item => item.id === dragging)
 
   useEffect(() => {
@@ -333,7 +330,8 @@ export default function App() {
     if (!force && detectionCache.current.has(key)) return Promise.resolve()
     const publish = (result: Detection) => {
       detectionCache.current.set(key, result)
-      setDetections(current => ({ ...current, [key]: result }))
+      // 后台预检只更新缓存，当前应用的检测结果才触发界面渲染。
+      if (activeRef.current === id) setDetectionRevision(current => current + 1)
     }
     publish({ installation: detectionCache.current.get(key)?.installation ?? null, error: '', checking: true, checked: false })
     const request = window.wide.detect(id, value.executablePath, force).then(installation => {
@@ -417,12 +415,11 @@ export default function App() {
   return <div className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''}`}>
     <aside className="sidebar">
       <div className={`brand-bar ${platform === 'darwin' ? 'mac-brand' : ''}`}><Maximize2 size={22} />{!collapsed && <span>wide</span>}<button className="icon-button collapse-toggle" title={collapsed ? '展开菜单' : '收起菜单'} aria-label={collapsed ? '展开菜单' : '收起菜单'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><PanelLeft size={18} strokeWidth={1.6} aria-hidden="true" /></button></div>
-      {!collapsed && <div className="sidebar-search"><Search size={15} /><input aria-label="搜索功能" placeholder="搜索功能" value={query} onChange={event => setQuery(event.target.value)} />{query && <button className="icon-button" aria-label="清空搜索" onClick={() => setQuery('')}><X size={12} /></button>}</div>}
       <div className="sidebar-navigation">
-      {(visibleStart || visibleHarness) && <><div className="menu-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu">{visibleStart && <button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button>}{visibleHarness && <button className={`feature-item ${isHarness ? 'selected' : ''}`} aria-label="Harness" aria-current={isHarness ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button>}</nav></>}
-      {(visibleFeatures.length > 0 || !query) && <div className="menu-section-label">应用</div>}
+      <div className="menu-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu"><button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button><button className={`feature-item ${isHarness ? 'selected' : ''}`} aria-label="Harness" aria-current={isHarness ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button></nav>
+      <div className="menu-section-label">应用</div>
       <nav ref={menuRef} aria-label="应用菜单" className={`feature-menu ${dragging ? 'menu-dragging' : ''}`}>
-        {visibleFeatures.map(({ id, name, icon: Icon }) => <button key={id}
+        {orderedFeatures.map(({ id, name, icon: Icon }) => <button key={id}
           className={`feature-item draggable-menu-item ${id === active ? 'selected' : ''} ${dragging === id ? 'drag-source' : ''} ${dropTarget?.id === id ? dropTarget.after ? 'drop-after' : 'drop-before' : ''}`}
           aria-label={name} aria-current={id === active ? 'page' : undefined} data-feature-id={id}
           title={`${name} · Ctrl+${menuOrder.indexOf(id) + 1} · 拖动调整顺序`}
@@ -434,14 +431,13 @@ export default function App() {
             if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key) || !ready || bootError) return
             event.preventDefault()
             const direction = event.key === 'ArrowDown' ? 1 : -1
-            const target = visibleFeatures[visibleFeatures.findIndex(item => item.id === id) + direction]
+            const target = orderedFeatures[orderedFeatures.findIndex(item => item.id === id) + direction]
             if (target) reorderMenu(id, target.id, direction === 1)
           }}>
           <div className="menu-icon" aria-hidden="true"><Icon size={20} /><GripVertical size={18} className="menu-grip" /></div>
           {!collapsed && <><span>{name}</span></>}
         </button>)}
       </nav>
-      {!collapsed && !visibleFeatures.length && !visibleStart && !visibleHarness && <p className="search-empty">没有匹配的功能</p>}
       </div>
       <span className="sr-only" role="status" aria-live="polite">{menuAnnouncement}</span>
       <div className="sidebar-bottom"><button className={`feature-item own-settings ${isAppSettings ? 'selected' : ''}`} aria-current={isAppSettings ? 'page' : undefined} title="设置 · Ctrl+," onClick={() => setActive('settings')}><Settings2 size={18} />{!collapsed && <span>设置</span>}</button>{!collapsed && <div className="local-badge"><Monitor size={14} /><span>{platformName[platform] || platform}</span><small>v{version}</small></div>}</div>
@@ -453,7 +449,7 @@ export default function App() {
         {configWarning && <div className="info-banner">{configWarning}</div>}
         {Object.values(saveErrors).length > 0 && <div className="error-banner" role="alert">自动保存失败：{Object.values(saveErrors).join('；')}</div>}
         <div className="page-header"><div className="page-title-group"><PageIcon size={26} strokeWidth={1.6} /><h1>{title}</h1></div>{isApplication && <div className="page-header-actions"><button className="button primary start-button" disabled={!desktop || disabled || invalid || missingInstallation} onClick={() => { void run('apply') }}>{currentOperation === 'apply' ? <RefreshCw size={15} className="spin" /> : <Play size={15} fill="currentColor" />}{currentOperation === 'apply' ? '启动中…' : '启动'}</button><button className="button secondary start-button" disabled={!desktop || disabled || !!errors.executablePath || missingInstallation} title={`完整退出 ${title}`} onClick={() => { void run('exit') }}>{currentOperation === 'exit' ? <RefreshCw size={15} className="spin" /> : <LogOut size={15} />}{currentOperation === 'exit' ? '退出中…' : '退出'}</button></div>}</div>
-        {isGlobal ? <div className="settings-page global-page">
+        <Activity mode={isGlobal ? 'visible' : 'hidden'}><div className="settings-page global-page">
           <section className="settings-group" aria-label="全局应用操作"><h2>应用</h2><div className="settings-list">
             {(['start', 'restart', 'exit'] as const).map(action => {
               const label = BATCH_ACTION_LABELS[action]
@@ -483,7 +479,8 @@ export default function App() {
               return <div className={`batch-result setting-row ${result.status}`} key={result.id}><div className="batch-app-name"><ResultIcon size={20} /><span>{APPLICATIONS[result.id].name}</span></div><span className="batch-result-message">{result.message}</span></div>
             })}</div>}
           </section>}
-        </div> : isHarness ? <Suspense fallback={<p className="operation-note" role="status">正在加载 Harness…</p>}><HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /></Suspense> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
+        </div></Activity>
+        {isGlobal ? null : isHarness ? <Suspense fallback={<p className="operation-note" role="status">正在加载 Harness…</p>}><HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /></Suspense> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>
           <section className="settings-group" aria-label="内容布局"><h2>布局</h2><div className="settings-list">
             {capability.sidebarWidth && <DimensionControl id="sidebarWidth" label="左侧栏宽度" value={settings.sidebarWidth} fallback={defaults.sidebarWidth} disabled={disabled} error={errors.sidebarWidth} onChange={value => updateApplication('sidebarWidth', value)} />}
             <DimensionControl id="width" label="内容区宽度" value={settings.width} fallback={defaults.width} disabled={disabled} error={errors.width} onChange={value => updateApplication('width', value)} />
@@ -494,6 +491,7 @@ export default function App() {
             {capability.fontFamily && <SettingRow label="字体" htmlFor="fontFamily" error={errors.fontFamily}><FontControl label={`${title} 字体`} id="fontFamily" value={settings.fontFamily} disabled={disabled} error={errors.fontFamily} onChange={value => updateApplication('fontFamily', value)} /></SettingRow>}
             {capability.fontSize && <SettingRow label="字号" htmlFor="fontSize" error={errors.fontSize}><PixelControl id="fontSize" min="8" max="72" value={settings.fontSize} {...inputProps('fontSize')} onChange={event => updateApplication('fontSize', Number(event.target.value))} /></SettingRow>}
             <SettingRow label="字重" htmlFor="fontWeight" error={errors.fontWeight}><input id="fontWeight" className="field-input number-input" type="number" min="100" max="1000" step="100" value={settings.fontWeight} {...inputProps('fontWeight')} onChange={event => updateApplication('fontWeight', Number(event.target.value))} /></SettingRow>
+            {(['zcode', 'droid', 'dsh', 'qoder'] as FeatureId[]).includes(applicationId) && <SettingRow label="终端跟随"><Switch label="终端跟随" checked={settings.terminalFollow} disabled={disabled} onChange={value => updateApplication('terminalFollow', value)} /></SettingRow>}
           </div></section>
           {(capability.merge || capability.diff || capability.changes || capability.summary) && <section className="settings-group" aria-label={`${title} 界面`}><h2>界面</h2><div className="settings-list">
             {capability.merge && <SettingRow label="隐藏本地 Merge"><Switch label="隐藏本地 Merge" checked={settings.hideLocalMerge} disabled={disabled} onChange={value => updateApplication('hideLocalMerge', value)} /></SettingRow>}

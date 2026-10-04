@@ -14,6 +14,7 @@ export interface DroidSettings {
   fontFamily: string
   fontSize: number
   fontWeight: number
+  terminalFollow: boolean
   hideLocalMerge: boolean
   hideGitDiff: boolean
   port: number
@@ -155,13 +156,13 @@ export function parseAppearance(input: unknown): AppearanceSettings {
 }
 export const DEFAULT_DROID: DroidSettings = {
   width: '70vw', sidebarWidth: '15vw', maxWidth: '90rem', chatHeight: '80px',
-  fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, fontWeight: 300,
+  fontFamily: 'Cascadia Mono, LXGW WenKai Mono', fontSize: 17, fontWeight: 300, terminalFollow: true,
   hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, port: DEFAULT_APPLICATION_PORTS.droid, executablePath: ''
 }
 export const APPLICATIONS = {
   codex: { name: 'Codex', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
   droid: { name: 'Droid', sidebarWidth: false, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  zcode: { name: 'ZCode', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: false, merge: false, diff: false, changes: true, summary: false },
+  zcode: { name: 'ZCode', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: true, summary: false },
   workbuddy: { name: 'WorkBuddy', sidebarWidth: true, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
   dsh: { name: 'DSH', sidebarWidth: true, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
   qoder: { name: 'Qoder', sidebarWidth: false, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
@@ -170,7 +171,7 @@ export const APPLICATIONS = {
 export const DEFAULT_APPLICATIONS: ApplicationPreferences = {
   codex: { ...DEFAULT_DROID, fontWeight: 100, preventSummary: true, port: DEFAULT_APPLICATION_PORTS.codex },
   droid: { ...DEFAULT_DROID },
-  zcode: { ...DEFAULT_DROID, hideChanges: true, port: DEFAULT_APPLICATION_PORTS.zcode },
+  zcode: { ...DEFAULT_DROID, fontSize: 18, hideChanges: true, port: DEFAULT_APPLICATION_PORTS.zcode },
   workbuddy: { ...DEFAULT_DROID, fontWeight: 200, port: DEFAULT_APPLICATION_PORTS.workbuddy },
   dsh: { ...DEFAULT_DROID, port: DEFAULT_APPLICATION_PORTS.dsh },
   qoder: { ...DEFAULT_DROID, port: DEFAULT_APPLICATION_PORTS.qoder },
@@ -198,12 +199,13 @@ export function settingsErrors(value: DroidSettings): Partial<Record<keyof Droid
   if (typeof value.executablePath !== 'string' || /[\r\n\0]/.test(value.executablePath)) errors.executablePath = '应用路径无效'
   if (typeof value.hideLocalMerge !== 'boolean' || typeof value.hideGitDiff !== 'boolean') errors.hideLocalMerge = '隐藏选项无效'
   if (typeof value.hideChanges !== 'boolean' || typeof value.preventSummary !== 'boolean') errors.hideChanges = '界面选项无效'
+  if (typeof value.terminalFollow !== 'boolean') errors.terminalFollow = '终端跟随选项无效'
   return errors
 }
 export function parseSettings(input: unknown, id: FeatureId = 'droid'): DroidSettings {
   if (!input || typeof input !== 'object') throw new Error('设置格式无效')
   // 旧版本尚未保存侧栏字段；独立保存或启动时也兼容缺失的新设置。
-  const value = { sidebarWidth: DEFAULT_APPLICATIONS[id].sidebarWidth, ...input } as Record<string, unknown>
+  const value = { sidebarWidth: DEFAULT_APPLICATIONS[id].sidebarWidth, terminalFollow: DEFAULT_APPLICATIONS[id].terminalFollow, ...input } as Record<string, unknown>
   for (const [key, fallback] of Object.entries(DEFAULT_DROID)) {
     if (typeof value[key] !== typeof fallback) throw new Error(`设置 ${key} 的类型无效`)
   }

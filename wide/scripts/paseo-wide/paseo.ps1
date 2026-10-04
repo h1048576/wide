@@ -1,5 +1,6 @@
 ﻿param(
     [switch]$DetectOnly,
+    [switch]$LaunchOnly,
     [string]$ExecutablePath,
     [ValidatePattern('^(?:auto|fit-content|(?:0|[1-9][0-9]{0,3})(?:\.[0-9]+)?(?:px|rem|em|vw|vh|%))$')]
     [string]$Width = '70vw',
@@ -442,7 +443,9 @@ try {
 
     Write-Step "正在启动 Paseo（CDP 端口 $Port）…"
     Start-Paseo $paseo $debugArgs
-    $targets = @(Wait-Cdp $Port 12)
+    # 桌面入口使用持久连接统一等待页面并注入，避免脚本先超时或重复注入。
+    if ($LaunchOnly) { Stop-RunTranscript; exit 0 }
+    $targets = @(Wait-Cdp $Port 60)
 
     if ($targets.Count -eq 0) {
         throw "Paseo 未在 http://127.0.0.1:$Port 提供可用的 CDP page target。请关闭由其他安装目录或开发环境启动的 Paseo 后重试。"

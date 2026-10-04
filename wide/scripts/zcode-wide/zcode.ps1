@@ -12,6 +12,9 @@
     [ValidateRange(100, 1000)]
     [int]$FontWeight = 300,
 
+    [ValidateRange(8, 72)]
+    [int]$FontSize = 18,
+
     [ValidateRange(1024, 65535)]
     [int]$Port = 9333,
 
@@ -502,7 +505,8 @@ function Inject-ZCodeUi([object[]]$Targets, [string]$ContentWidth, [string]$Requ
     $css = @"
 :root,
 body,
-body * {
+body *:not(.xterm, .xterm *) {
+    font-size: ${FontSize}px !important;
     font-weight: $ContentFontWeight !important;
 }
 

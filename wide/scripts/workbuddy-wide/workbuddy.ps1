@@ -287,6 +287,9 @@ function Inject-WorkBuddyUi(
 ) {
     $safeWidth = $ContentWidth.Replace("'", '')
     $safeMaxWidth = $ContentMaxWidth.Replace("'", '')
+    # 内容宽度不能超过左右侧栏之间的实际可用空间。
+    if ($safeWidth -notin @('auto', 'fit-content')) { $safeWidth = "min(100%, $safeWidth)" }
+    $safeMaxWidth = if ($safeMaxWidth -eq 'none') { '100%' } else { "min(100%, $safeMaxWidth)" }
     $safeFontFamily = $ContentFontFamily.Trim()
     $css = @"
 :root {
@@ -323,6 +326,7 @@ function Inject-WorkBuddyUi(
 .project-detail-view__input-area--task,
 .wb-home-route__input-wrap {
     box-sizing: border-box !important;
+    min-width: 0 !important;
     width: $safeWidth !important;
     max-width: $safeMaxWidth !important;
     margin-left: auto !important;

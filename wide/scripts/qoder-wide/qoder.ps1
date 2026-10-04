@@ -402,7 +402,7 @@ function Inject-QoderUi(
 
 :root,
 body,
-body * {
+body *:not(.xterm, .xterm *) {
     font-family: $safeFontFamily !important;
     font-size: ${ContentFontSize}px !important;
     font-weight: $ContentFontWeight !important;

@@ -2,7 +2,7 @@ import { detectApplication, isApplicationRunning, quitApplication, runApplicatio
 import { normalizeMenuOrder, type BatchAction, type BatchApplicationResult, type BatchProgress, type BatchResult, type FeatureId, type OperationLevel, type Preferences } from '../shared/types'
 
 let batchRevision = 0
-const BATCH_CONCURRENCY = 3
+const BATCH_CONCURRENCY = 5
 
 export async function runAllApplications(action: BatchAction, preferences: Preferences, onProgress: (progress: BatchProgress) => void, ids?: FeatureId[]): Promise<BatchResult> {
   const revision = ++batchRevision

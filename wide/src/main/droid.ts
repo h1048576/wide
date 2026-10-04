@@ -1,3 +1,4 @@
+import { terminalInjection } from './terminal-injection'
 import { app } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -92,8 +93,10 @@ function runWindows(action: 'apply' | 'normal', settings: DroidSettings, log: Wr
 }
 
 export function injectionSource(settings: DroidSettings) {
-  const css = `:root,body,body * { font-family:${settings.fontFamily} !important;font-size:${settings.fontSize}px !important;font-weight:${settings.fontWeight} !important; }
-    [data-droid-wide-content],[data-new-session-composer-v2="true"] { width:${settings.width} !important;max-width:${settings.maxWidth} !important; }
+  const width = ['auto', 'fit-content'].includes(settings.width) ? settings.width : `min(100%, ${settings.width})`
+  const maxWidth = settings.maxWidth === 'none' ? '100%' : `min(100%, ${settings.maxWidth})`
+  const css = `:root,body,body *:not(.xterm, .xterm *) { font-family:${settings.fontFamily} !important;font-size:${settings.fontSize}px !important;font-weight:${settings.fontWeight} !important; }
+    [data-droid-wide-content],[data-new-session-composer-v2="true"] { box-sizing:border-box !important;min-width:0 !important;width:${width} !important;max-width:${maxWidth} !important; }
     [data-testid="chat-composer-wrapper"] > [data-direction="row"][data-flex-row="true"]:first-child,
     [data-testid="chat-composer-wrapper"] [contenteditable="true"][role="textbox"] { box-sizing:border-box !important;height:${settings.chatHeight} !important;min-height:${settings.chatHeight} !important;max-height:${settings.chatHeight} !important; }
     ${settings.hideLocalMerge ? '[data-testid="changes-primary-cta"],[data-testid="changes-primary-cta-caret"] {display:none !important;}' : ''}
@@ -103,6 +106,7 @@ export function injectionSource(settings: DroidSettings) {
       let style = document.getElementById('droid-wide-ui-override');
       if (!style) { style = document.createElement('style'); style.id = 'droid-wide-ui-override'; (document.head || document.documentElement).appendChild(style); }
       style.textContent = ${JSON.stringify(css)};
+      ${terminalInjection('droid', settings)};
       if (window.__droidWideContentGuard) { window.__droidWideContentGuard.scan(); return true; }
       const roots = new Set(); let scheduled = false;
       const mark = root => { if (!(root instanceof Element)) return; [root, ...root.querySelectorAll('*')].forEach(el => { if (!el.hasAttribute('data-droid-wide-content') && getComputedStyle(el).maxWidth === '768px') el.setAttribute('data-droid-wide-content', ''); }); };

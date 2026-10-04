@@ -27,6 +27,8 @@ export class Store {
         applications: Object.fromEntries(DEFAULT_MENU_ORDER.map(id => {
           const saved = data.applications?.[id] ?? (id === 'droid' ? data.droid : undefined)
           const settings = { ...DEFAULT_APPLICATIONS[id], ...saved }
+          // 旧版 ZCode 的字号未开放，保存的 17 是通用占位值。
+          if (id === 'zcode' && saved?.terminalFollow === undefined) settings.fontSize = DEFAULT_APPLICATIONS.zcode.fontSize
           // 只迁移旧预设端口；Codex 和自定义端口保持原值。保存版本标记后不再重复迁移。
           if (data.applicationPortsVersion !== APPLICATION_PORTS_VERSION && id !== 'codex' && saved?.port === LEGACY_APPLICATION_PORTS[id]) settings.port = DEFAULT_APPLICATIONS[id].port
           return [id, parseSettings(settings, id)]

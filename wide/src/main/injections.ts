@@ -1,3 +1,4 @@
+import { terminalInjection } from './terminal-injection'
 import templates from './injection-templates.json'
 import type { ApplicationSettings, FeatureId } from '../shared/types'
 import { dshInjection } from './dsh-injection'
@@ -12,8 +13,8 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
     return /^(serif|sans-serif|monospace|system-ui|ui-[a-z-]+|cursive|fantasy)$/i.test(value) ? value : JSON.stringify(value)
   }).join(', ') + ', monospace'
   const values: Record<string, string> = {
-    safeWidth: id === 'qoder' && !['auto', 'fit-content'].includes(settings.width) ? `min(100%, ${settings.width})` : settings.width,
-    safeMaxWidth: id === 'qoder' ? settings.maxWidth === 'none' ? '100%' : `min(100%, ${settings.maxWidth})` : settings.maxWidth,
+    safeWidth: (id === 'qoder' || id === 'workbuddy') && !['auto', 'fit-content'].includes(settings.width) ? `min(100%, ${settings.width})` : settings.width,
+    safeMaxWidth: id === 'qoder' || id === 'workbuddy' ? settings.maxWidth === 'none' ? '100%' : `min(100%, ${settings.maxWidth})` : settings.maxWidth,
     safeFontFamily: font, cssFontFamily: font,
     ContentFontSize: String(settings.fontSize), ContentFontWeight: String(settings.fontWeight),
     hiddenUiCss: [settings.hideLocalMerge ? '[data-testid="changes-primary-cta"],[data-testid="changes-primary-cta-caret"]{display:none !important;}' : '', settings.hideGitDiff ? '[data-testid="composer-diff-stat-pill"]{display:none !important;}' : ''].join('\n'),
@@ -25,5 +26,6 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
     return values[key]
   })
   const source = template.source.replaceAll('$cssJson', JSON.stringify(css)).replaceAll('$PreventSummary', settings.preventSummary ? '1' : '0')
+  if (id === 'zcode' || id === 'qoder') return `${source.trim().replace(/;$/, '')} && ${terminalInjection(id, settings)}`
   return id === 'workbuddy' ? `${source}\n${workbuddySidebarInjection(settings.sidebarWidth)}` : source
 }

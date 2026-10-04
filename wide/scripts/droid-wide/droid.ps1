@@ -382,6 +382,9 @@ function Inject-DroidUi(
 ) {
     $safeWidth = $ContentWidth.Replace("'", "")
     $safeMaxWidth = $ContentMaxWidth.Replace("'", "")
+    # 内容区以左右侧栏之间的可用空间为上限。
+    if ($safeWidth -notin @('auto', 'fit-content')) { $safeWidth = "min(100%, $safeWidth)" }
+    $safeMaxWidth = if ($safeMaxWidth -eq 'none') { '100%' } else { "min(100%, $safeMaxWidth)" }
     $safeChatHeight = $ContentChatHeight.Replace("'", "")
     $safeFontFamily = $ContentFontFamily.Trim()
     $hiddenUiRules = @()
@@ -405,7 +408,7 @@ function Inject-DroidUi(
     $css = @"
 :root,
 body,
-body * {
+body *:not(.xterm, .xterm *) {
     font-family: $safeFontFamily !important;
     font-size: ${ContentFontSize}px !important;
     font-weight: $ContentFontWeight !important;
@@ -413,6 +416,8 @@ body * {
 
 [data-droid-wide-content],
 [data-new-session-composer-v2="true"] {
+    box-sizing: border-box !important;
+    min-width: 0 !important;
     width: $safeWidth !important;
     max-width: $safeMaxWidth !important;
 }

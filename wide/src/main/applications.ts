@@ -11,6 +11,7 @@ import { APPLICATIONS, type ApplicationSettings, type DroidInstallation, type Fe
 import { detectDroid, disposeDroidConnections, runDroid } from './droid'
 import { applicationInjection } from './injections'
 import { createPageConnection } from './page-connection'
+import { createPowerShellOutput } from './powershell-output'
 
 const exec = promisify(execFile)
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -117,24 +118,22 @@ function executeScript(command: string, name: string, report: Report): Promise<n
   return new Promise((resolve, reject) => {
     const child = spawn(powershell, psArgs(command), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     const output = new StringDecoder('utf8'), errorOutput = new StringDecoder('utf8')
-    let buffer = '', selectedPort: number | undefined, failure = '', settled = false
-    const consume = (chunk: string) => {
-      buffer += chunk
-      const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''
-      for (const line of lines) {
+    let selectedPort: number | undefined, failure = '', settled = false
+    const consume = (line: string) => {
         const match = /CDP 端口 (\d+)/.exec(line)
         if (match) selectedPort = Number(match[1])
         if (/失败：/.test(line)) { failure = line.replace(/^.*?失败：/, ''); report(failure, 'error') }
-      }
     }
-    child.stdout.on('data', chunk => consume(output.write(chunk)))
-    child.stderr.on('data', chunk => consume(errorOutput.write(chunk)))
+    const stdout = createPowerShellOutput(consume), stderr = createPowerShellOutput(consume)
+    child.stdout.on('data', chunk => stdout.write(output.write(chunk)))
+    child.stderr.on('data', chunk => stderr.write(errorOutput.write(chunk)))
     let exitTimer: ReturnType<typeof setTimeout> | undefined
     const finish = (code: number | null, error?: Error) => {
       if (settled) return
       settled = true
       clearTimeout(timer); clearTimeout(exitTimer)
-      consume(output.end() + errorOutput.end() + '\n')
+      stdout.write(output.end()); stdout.end()
+      stderr.write(errorOutput.end()); stderr.end()
       // Electron 子进程可能继承管道；启动脚本退出后不再等待应用关闭管道。
       child.stdout.destroy(); child.stderr.destroy()
       if (error) { reject(error); return }
@@ -148,7 +147,7 @@ function executeScript(command: string, name: string, report: Report): Promise<n
 }
 async function connectPages(id: Exclude<FeatureId, 'droid'>, port: number, settings: ApplicationSettings, report: Report) {
   const source = applicationInjection(id, settings)
-  const deadline = Date.now() + 20000
+  const deadline = Date.now() + 60000
   let error: unknown
   do {
     try { await connection(id).connect(port, source, report); return }
@@ -169,7 +168,7 @@ async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'no
   if (capability.summary) args.push('-PreventSummary', String(Number(settings.preventSummary)))
   if (settings.executablePath) args.push('-ExecutablePath', quote(settings.executablePath))
   if (action === 'normal') args.push('-Normal')
-  else if (id === 'zcode' || id === 'qoder') args.push('-LaunchOnly')
+  else if (id === 'zcode' || id === 'qoder' || id === 'paseo') args.push('-LaunchOnly')
   const port = await executeScript(args.join(' '), capability.name, report)
   if (action === 'apply') {
     if (!port) throw new Error(`${capability.name} 实际调试端口未返回，请重新启动。`)
@@ -231,7 +230,7 @@ export async function runApplication(id: FeatureId, action: 'apply' | 'normal', 
   if (startupMode === 'maximized' && process.platform === 'win32') {
     const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'maximize-window.ps1')
     try {
-      await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)}`), { windowsHide: true, timeout: 22000, maxBuffer: 1024 * 1024 })
+      await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)}`), { windowsHide: true, timeout: 55000, maxBuffer: 1024 * 1024 })
     } catch { throw new Error(`${APPLICATIONS[id].name} 已启动，但未能最大化主窗口，请确认主窗口已打开。`) }
   }
 }
