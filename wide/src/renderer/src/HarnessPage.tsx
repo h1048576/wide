@@ -1,28 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, Copy, Eye, FileText, RefreshCw, Trash2, X } from 'lucide-react'
-import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessInventory, type HarnessOperationResult, type HarnessSettings } from '../../shared/types'
+import { HARNESSES, type HarnessDocument, type HarnessId, type HarnessOperationResult, type HarnessSettings } from '../../shared/types'
 import ModelsSection from './ModelsSection'
 import McpsSection from './McpsSection'
 import HarnessSectionHeading, { HarnessExpandToggle } from './HarnessSectionHeading'
 import { displayHarnessPath } from './harnessPath'
+import { agentsResource, skillsResource } from './harnessResources'
+import { useInventoryResource } from './inventoryResource'
 
 const messageOf = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error)
-const emptyInventory: HarnessInventory = {
-  agentsSource: { path: '~/.claude/CLAUDE.md', exists: false },
-  harnesses: HARNESSES.map(harness => ({ id: harness.id, name: harness.name, path: `~/${harness.directory}`, skillsPath: `~/${harness.directory}/skills`, exists: false, skills: [] }))
-}
-
 export default function HarnessPage({ settings, disabled, onBusyChange, onNotice }: {
   settings: HarnessSettings
   disabled: boolean
   onBusyChange: (busy: boolean) => void
   onNotice: (text: string, error?: boolean) => void
 }) {
-  const [inventory, setInventory] = useState<HarnessInventory>(emptyInventory)
-  const [loading, setLoading] = useState(!!window.wide)
-  const [loadError, setLoadError] = useState('')
-  const [skillsLoading, setSkillsLoading] = useState(false)
-  const [skillsError, setSkillsError] = useState('')
   const [skillsOpen, setSkillsOpen] = useState(!settings.skillsCollapsed)
   const [expanded, setExpanded] = useState<Partial<Record<HarnessId, boolean>>>({})
   const [operation, setOperation] = useState<string | null>(null)
@@ -31,44 +23,36 @@ export default function HarnessPage({ settings, disabled, onBusyChange, onNotice
   const [result, setResult] = useState<HarnessOperationResult | null>(null)
   const mounted = useRef(true)
   const operationLock = useRef(false)
-  const disabledRef = useRef(disabled)
-  disabledRef.current = disabled
   const closePreview = useRef<HTMLButtonElement>(null)
   const previewButton = useRef<HTMLButtonElement>(null)
   const desktop = !!window.wide
-  const skillsBusy = loading || skillsLoading
+  const agents = useInventoryResource(agentsResource, true, disabled || !!operation || !!document)
+  const skills = useInventoryResource(skillsResource, skillsOpen, disabled || !!operation || !!document)
+  const inventory = { agentsSource: agents.data.agentsSource, harnesses: skills.data }
+  const loading = agents.loading
+  const loadError = agents.error
+  const skillsError = skills.error
+  const skillsBusy = skills.loading
   const locked = disabled || skillsBusy || !!operation
-  const allSkillsExpanded = skillsOpen && HARNESSES.every(harness => expanded[harness.id])
+  const allSkillsExpanded = skillsOpen && inventory.harnesses.every(harness => expanded[harness.id])
 
   async function refresh() {
-    if (!window.wide) return
-    try {
-      const next = await window.wide.harnessInventory()
-      if (mounted.current) { setInventory(next); setLoadError(''); setSkillsError('') }
-    } catch (error) { if (mounted.current) setLoadError(messageOf(error)) }
-    finally { if (mounted.current) setLoading(false) }
+    agentsResource.invalidate()
+    await agentsResource.refresh(true)
   }
-  async function refreshSkills() {
-    if (!window.wide) return
-    setSkillsLoading(true)
-    try {
-      const harnesses = await window.wide.harnessSkillsInventory()
-      if (mounted.current) { setInventory(current => ({ ...current, harnesses })); setSkillsError('') }
-    } catch (error) { if (mounted.current) setSkillsError(messageOf(error)) }
-    finally { if (mounted.current) setSkillsLoading(false) }
+  async function refreshSkills(invalidate = true) {
+    if (invalidate) skillsResource.invalidate()
+    await skillsResource.refresh(true)
   }
 
   function expandSkills(open: boolean) {
-    setExpanded(Object.fromEntries(HARNESSES.map(harness => [harness.id, open])))
+    setExpanded(Object.fromEntries(inventory.harnesses.map(harness => [harness.id, open])))
     if (open) setSkillsOpen(true)
   }
 
   useEffect(() => {
     mounted.current = true
-    void refresh()
-    const onFocus = () => { if (!operationLock.current && !disabledRef.current) void refresh() }
-    window.addEventListener('focus', onFocus)
-    return () => { mounted.current = false; window.removeEventListener('focus', onFocus) }
+    return () => { mounted.current = false }
   }, [])
   useEffect(() => {
     if (!document) return
@@ -131,7 +115,7 @@ export default function HarnessPage({ settings, disabled, onBusyChange, onNotice
     </div><p className="operation-note">以 Claude 的 CLAUDE.md 为源文件，同步为 .factory、.codex、.agents、.dsh 下的 AGENTS.md。{desktop && !loading && !inventory.agentsSource.exists ? '源文件未找到。' : ''}</p></section>
     <HarnessSectionHeading title="Skills" expanded={skillsOpen} contentId="harness-skills-content" onToggle={() => setSkillsOpen(current => !current)}>
       <HarnessExpandToggle title="Skills" expanded={allSkillsExpanded} onToggle={() => expandSkills(!allSkillsExpanded)} />
-      <button className="icon-button" aria-label="刷新 Skills" title="刷新" disabled={!desktop || locked} onClick={() => { void refreshSkills() }}><RefreshCw size={15} className={skillsBusy ? 'spin' : ''} /></button>
+      <button className="icon-button" aria-label="刷新 Skills" title="刷新" disabled={!desktop || locked} onClick={() => { void refreshSkills(false) }}><RefreshCw size={15} className={skillsBusy ? 'spin' : ''} /></button>
     </HarnessSectionHeading>
     <div id="harness-skills-content" hidden={!skillsOpen}>
     {skillsError && <p className="field-error" role="alert">读取 Skills 失败：{skillsError}</p>}
@@ -144,8 +128,8 @@ export default function HarnessPage({ settings, disabled, onBusyChange, onNotice
       </div>{harness.error && <p className="field-error detection-error" role="alert">{harness.error}</p>}
     </section>)}
     </div>
-    <ModelsSection defaultCollapsed={settings.modelsCollapsed} disabled={locked} onBusyChange={onBusyChange} />
-    <McpsSection defaultCollapsed={settings.mcpsCollapsed} disabled={locked} onBusyChange={onBusyChange} />
+    <ModelsSection defaultCollapsed={settings.modelsCollapsed} disabled={disabled || !!operation} onBusyChange={onBusyChange} />
+    <McpsSection defaultCollapsed={settings.mcpsCollapsed} disabled={disabled || !!operation} onBusyChange={onBusyChange} />
     {result && <div className={`harness-result ${result.success ? 'success' : 'error'}`} role="status">{result.success ? <Check size={16} /> : <CircleAlert size={16} />}<span>{result.message}</span></div>}
     {document && <div className="harness-preview-backdrop" onClick={event => { if (event.target === event.currentTarget) { setDocument(null); previewButton.current?.focus() } }}><section className="harness-preview" role="dialog" aria-modal="true" aria-labelledby="harness-preview-title" aria-describedby="harness-preview-path"><header><div><h2 id="harness-preview-title">AGENTS.md 预览</h2><p id="harness-preview-path">{displayHarnessPath(document.path)}</p></div><button ref={closePreview} className="icon-button" aria-label="关闭预览" onClick={() => { setDocument(null); previewButton.current?.focus() }}><X size={18} /></button></header><pre>{document.content || '（空文件）'}</pre></section></div>}
   </div>

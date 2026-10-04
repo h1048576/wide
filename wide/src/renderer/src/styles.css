@@ -108,6 +108,7 @@ h1 { font-size: 1.75rem; line-height: 1.3; font-weight: 550; letter-spacing: -.5
 .global-page .batch-result { min-height: 54px; padding: 12px 0; }
 .batch-app-name { display: flex; align-items: center; gap: 11px; font-size: .9rem; flex-shrink: 0; }
 .batch-result-message { color: var(--secondary); font-size: .8rem; line-height: 1.6; text-align: right; overflow-wrap: anywhere; }
+.batch-result-message > svg { display: inline-block; vertical-align: middle; margin-right: 7px; }
 .batch-result.success .batch-result-message { color: var(--green); }
 .batch-result.error .batch-result-message { color: var(--red); }
 .harness-document-row { min-height: 78px; }

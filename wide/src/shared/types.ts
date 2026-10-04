@@ -35,11 +35,15 @@ export type ApplicationSettings = DroidSettings
 export type ApplicationPreferences = Record<FeatureId, ApplicationSettings>
 export interface Preferences { applications: ApplicationPreferences; theme: Theme; appearance: AppearanceSettings; harness: HarnessSettings; startupMode: StartupMode; menuOrder: FeatureId[]; menuOrderVersion: number; applicationPortsVersion: number }
 export interface DroidInstallation { name: string; path: string; version: string }
+export const INSTALLATION_CACHE_MS = 60000
+export const MISSING_INSTALLATION_CACHE_MS = 15000
 export type OperationLevel = 'info' | 'success' | 'error'
 export interface JobResult { success: boolean; message: string }
 export type BatchAction = 'start' | 'restart' | 'exit'
+export type BatchStage = 'queued' | 'detecting' | 'checking' | 'stopping' | 'starting' | 'waiting' | 'applying' | 'maximizing'
+export const BATCH_STAGE_LABELS: Record<BatchStage, string> = { queued: '等待处理…', detecting: '检测安装…', checking: '检查运行状态…', stopping: '正在退出…', starting: '正在启动…', waiting: '等待窗口就绪…', applying: '正在应用界面设置…', maximizing: '正在最大化窗口…' }
 export interface BatchApplicationResult { id: FeatureId; status: 'success' | 'skipped' | 'error'; message: string; skipReason?: 'not-installed' | 'already-running' }
-export interface BatchProgress { action: BatchAction; currentIds: FeatureId[]; completed: number; total: number; results: BatchApplicationResult[] }
+export interface BatchProgress { action: BatchAction; applicationIds: FeatureId[]; stages: Partial<Record<FeatureId, BatchStage>>; currentIds: FeatureId[]; completed: number; total: number; results: BatchApplicationResult[] }
 export interface BatchResult extends JobResult { action: BatchAction; results: BatchApplicationResult[] }
 export type HarnessId = 'claude' | 'agents' | 'droid' | 'codex'
 export const HARNESSES: { id: HarnessId; name: string; directory: string }[] = [
@@ -96,7 +100,7 @@ export interface WideApi {
   run(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings): Promise<JobResult>
   quit(id: FeatureId, path: string): Promise<JobResult>
   runAll(action: BatchAction, ids?: FeatureId[]): Promise<BatchResult>
-  harnessInventory(): Promise<HarnessInventory>
+  harnessInventory(includeSkills?: boolean): Promise<HarnessInventory>
   harnessSkillsInventory(): Promise<HarnessFolder[]>
   harnessPreviewAgents(): Promise<HarnessDocument>
   harnessSyncAgents(): Promise<HarnessOperationResult>
@@ -160,13 +164,13 @@ export const DEFAULT_DROID: DroidSettings = {
   hideLocalMerge: false, hideGitDiff: false, hideChanges: false, preventSummary: false, port: DEFAULT_APPLICATION_PORTS.droid, executablePath: ''
 }
 export const APPLICATIONS = {
-  codex: { name: 'Codex', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
-  droid: { name: 'Droid', sidebarWidth: false, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  zcode: { name: 'ZCode', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: true, summary: false },
+  codex: { name: 'Codex', sidebarWidth: true, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: true },
+  droid: { name: 'Droid', sidebarWidth: true, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  zcode: { name: 'ZCode', sidebarWidth: true, maxWidth: false, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: true, summary: false },
   workbuddy: { name: 'WorkBuddy', sidebarWidth: true, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
   dsh: { name: 'DSH', sidebarWidth: true, maxWidth: true, chatHeight: true, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  qoder: { name: 'Qoder', sidebarWidth: false, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
-  paseo: { name: 'Paseo', sidebarWidth: false, maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
+  qoder: { name: 'Qoder', sidebarWidth: true, maxWidth: true, chatHeight: false, fontFamily: true, fontSize: true, merge: false, diff: false, changes: false, summary: false },
+  paseo: { name: 'Paseo', sidebarWidth: true, maxWidth: false, chatHeight: false, fontFamily: false, fontSize: false, merge: true, diff: true, changes: false, summary: false }
 } satisfies Record<FeatureId, object>
 export const DEFAULT_APPLICATIONS: ApplicationPreferences = {
   codex: { ...DEFAULT_DROID, fontWeight: 100, preventSummary: true, port: DEFAULT_APPLICATION_PORTS.codex },

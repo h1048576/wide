@@ -10,6 +10,9 @@ export class Store {
   warning?: string
   private queue: Promise<void> = Promise.resolve()
   private pending = 0
+  private changes: { change: (current: Preferences) => Preferences; resolve: () => void; reject: (error: unknown) => void }[] = []
+  private timer?: ReturnType<typeof setTimeout>
+  private queuedAt = 0
   private saveError?: Error
   get isSaving() { return this.pending > 0 }
   private get root() { return app.getPath('userData') }
@@ -48,9 +51,21 @@ export class Store {
   }
   update(change: (current: Preferences) => Preferences) {
     this.pending++
+    const result = new Promise<void>((resolve, reject) => { this.changes.push({ change, resolve, reject }) })
+    if (!this.queuedAt) this.queuedAt = Date.now()
+    clearTimeout(this.timer)
+    // 连续输入合并保存，持续输入时最多等待 600 毫秒；执行操作和关闭时立即刷盘。
+    this.timer = setTimeout(() => this.flushBatch(), Math.max(0, Math.min(150, 600 - (Date.now() - this.queuedAt))))
+    return result
+  }
+  private flushBatch() {
+    clearTimeout(this.timer); this.timer = undefined; this.queuedAt = 0
+    const changes = this.changes.splice(0)
+    if (!changes.length) return
     const task = this.queue.then(async () => {
-      const preferences = change(this.preferences)
+      const preferences = changes.reduce((current, item) => item.change(current), this.preferences)
       const snapshot = JSON.stringify(preferences, null, 2)
+      if (!this.warning && snapshot === JSON.stringify(this.preferences, null, 2)) return
       await mkdir(this.root, { recursive: true })
       if (this.warning) {
         await rename(join(this.root, 'settings.json'), join(this.root, `settings.backup-${Date.now()}.json`)).catch(error => {
@@ -63,15 +78,17 @@ export class Store {
       await rename(file + '.tmp', file)
       this.preferences = preferences
     })
-    const tracked = task.then(() => { this.saveError = undefined }, error => {
+    const tracked = task.then(() => {
+      this.saveError = undefined
+      changes.forEach(item => item.resolve())
+    }, error => {
       this.saveError = error instanceof Error ? error : new Error(String(error))
-      throw error
-    }).finally(() => { this.pending-- })
-    this.queue = tracked.catch(() => {})
-    return tracked
+      changes.forEach(item => item.reject(this.saveError))
+    }).finally(() => { this.pending -= changes.length })
+    this.queue = tracked
   }
   async flush() {
-    while (this.isSaving) await this.queue
+    while (this.isSaving) { this.flushBatch(); await this.queue }
     if (this.saveError) throw this.saveError
   }
 }

@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'application-processes.ps1')
 $scope = Get-WideApplicationScope $ExecutablePath $ApplicationId
 $tracked = @{}
+$stopFailures = @{}
 
 function Get-OwnedProcesses {
     $snapshot = @(Get-CimInstance Win32_Process -ErrorAction Stop)
@@ -47,12 +48,20 @@ function Get-OwnedProcesses {
 }
 
 function Stop-OwnedProcess([object]$ProcessInfo) {
-    $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($ProcessInfo.ProcessId)" -ErrorAction Stop
-    if (-not $current -or $current.CreationDate -ne $ProcessInfo.CreationDate) { return }
-    try { Stop-Process -Id $ProcessInfo.ProcessId -Force -ErrorAction Stop }
-    catch {
-        if (Get-Process -Id $ProcessInfo.ProcessId -ErrorAction SilentlyContinue) { throw }
+    $process = Get-Process -Id $ProcessInfo.ProcessId -ErrorAction SilentlyContinue
+    if (-not $process) { return }
+    try {
+        if ($process.HasExited) { return }
+        # CIM 创建时间精确到微秒，StartTime 精确到 100 纳秒；核对身份，避免 PID 复用。
+        # 本地进程对象不再逐个查询 WMI，批量退出时也能及时完成。
+        if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $ProcessInfo.CreationDate.ToUniversalTime()).Ticks) -ge 10) { return }
+        Stop-Process -InputObject $process -Force -ErrorAction Stop
     }
+    catch {
+        # 进程可能正随父进程退出；先处理其他进程，最终只报告仍存活的进程。
+        $stopFailures[$ProcessInfo.ProcessId] = [pscustomobject]@{ CreationDate = $ProcessInfo.CreationDate; Message = $_.Exception.Message }
+    }
+    finally { $process.Dispose() }
 }
 
 $running = @(Get-OwnedProcesses)
@@ -92,4 +101,11 @@ do {
     foreach ($processInfo in $remaining) { Stop-OwnedProcess $processInfo }
 } while ((Get-Date) -lt $deadline)
 
-throw '应用仍有后台进程未退出。'
+$remaining = @(Get-OwnedProcesses)
+if ($remaining.Count -eq 0) { exit 0 }
+$details = @($remaining | ForEach-Object {
+    $failure = $stopFailures[$_.ProcessId]
+    $message = if ($failure -and $failure.CreationDate -eq $_.CreationDate) { '：' + $failure.Message } else { '' }
+    "$($_.Name)（PID $($_.ProcessId)）$message"
+}) -join '；'
+throw "应用仍有后台进程未退出：$details"

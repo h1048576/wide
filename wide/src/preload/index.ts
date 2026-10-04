@@ -15,7 +15,7 @@ const api: WideApi = {
   run: (id, action, settings) => ipcRenderer.invoke('wide:run', id, action, settings),
   quit: (id, path) => ipcRenderer.invoke('wide:quit', id, path),
   runAll: (action, ids) => ipcRenderer.invoke('wide:run-all', action, ids),
-  harnessInventory: () => ipcRenderer.invoke('wide:harness-inventory'),
+  harnessInventory: (includeSkills = true) => ipcRenderer.invoke('wide:harness-inventory', includeSkills),
   harnessSkillsInventory: () => ipcRenderer.invoke('wide:harness-skills-inventory'),
   harnessPreviewAgents: () => ipcRenderer.invoke('wide:harness-preview-agents'),
   harnessSyncAgents: () => ipcRenderer.invoke('wide:harness-sync-agents'),

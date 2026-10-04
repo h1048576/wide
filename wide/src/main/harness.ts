@@ -26,10 +26,10 @@ export class HarnessManager {
 
   private sourcePath() { return join(this.folder('claude').path, 'CLAUDE.md') }
 
-  async inventory(): Promise<HarnessInventory> {
+  async inventory(includeSkills = true): Promise<HarnessInventory> {
     const sourcePath = this.sourcePath()
     const source = await stat(sourcePath).catch(() => null)
-    return { agentsSource: { path: sourcePath, exists: !!source?.isFile() }, harnesses: await this.skillsInventory() }
+    return { agentsSource: { path: sourcePath, exists: !!source?.isFile() }, harnesses: includeSkills ? await this.skillsInventory() : [] }
   }
 
   async skillsInventory(): Promise<HarnessFolder[]> {

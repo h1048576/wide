@@ -39,7 +39,10 @@ function registerIPC() {
   }
   handle('wide:bootstrap', () => ({ preferences: store.preferences, platform: process.platform, version: app.getVersion(), windowMaximized: window?.isMaximized() ?? false, openAtLogin: startup.enabled, startupAvailable: startup.available, configWarning: store.warning }))
   handle('wide:open-at-login', (enabled: unknown) => startup.set(enabled))
-  handle('wide:harness-inventory', () => harness.inventory())
+  handle('wide:harness-inventory', (includeSkills: unknown = true) => {
+    if (typeof includeSkills !== 'boolean') throw new Error('读取参数无效')
+    return harness.inventory(includeSkills)
+  })
   handle('wide:harness-skills-inventory', () => harness.skillsInventory())
   handle('wide:harness-preview-agents', () => harness.previewAgents())
   const harnessMutation = async (task: () => Promise<unknown>) => {
@@ -165,6 +168,8 @@ function registerIPC() {
     }
     if (busy) throw new Error('应用操作正在执行，请稍后再试。')
     busy = true
+    // 其他应用启动时会遮住 wide，批量进度仍需及时绘制。
+    window?.webContents.setBackgroundThrottling(false)
     try {
       // 退出仍使用最后成功保存的设置，避免字体等设置保存失败时无法退出应用。
       await store.flush().catch(error => { if (action !== 'exit') throw error })
@@ -172,6 +177,7 @@ function registerIPC() {
         progress => { if (window && !window.isDestroyed()) window.webContents.send('wide:batch-progress', progress) }, ids)
     } finally {
       busy = false
+      if (window && !window.isDestroyed()) window.webContents.setBackgroundThrottling(true)
       if (quitting) app.quit()
     }
   })

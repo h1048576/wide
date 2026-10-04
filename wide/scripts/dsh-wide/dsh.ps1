@@ -80,7 +80,8 @@ try {
     if (-not $Normal) {
         $Port = Select-DshPort $Port
         $launch.ArgumentList = @('--remote-debugging-address=127.0.0.1', "--remote-debugging-port=$Port")
-        Write-Host "[DSH Wide] 正在启动 DeepSeek Harness（CDP 端口 $Port）…"
+        if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[DSH Wide] 正在启动 DeepSeek Harness（CDP 端口 $Port）…") }
+        else { Write-Host "[DSH Wide] 正在启动 DeepSeek Harness（CDP 端口 $Port）…" }
     }
     Start-Process @launch | Out-Null
     # 样式注入及刷新、新窗口的持续守护由 wide 主进程处理。

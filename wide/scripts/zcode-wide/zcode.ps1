@@ -26,6 +26,7 @@
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Message) {
+    if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[ZCode Wide] $Message"); return }
     Write-Host "[ZCode Wide] $Message" -ForegroundColor Cyan
 }
 

@@ -69,6 +69,7 @@ function Stop-RunTranscript {
 }
 
 function Write-Step([string]$Message) {
+    if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[Paseo Wide] $Message"); return }
     Write-Host "[Paseo Wide] $Message" -ForegroundColor Cyan
 }
 

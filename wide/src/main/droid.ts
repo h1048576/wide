@@ -1,4 +1,5 @@
 import { terminalInjection } from './terminal-injection'
+import { droidSidebarInjection } from './droid-sidebar-injection'
 import { app } from 'electron'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -10,7 +11,7 @@ import { createServer } from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
 import { createPageConnection } from './page-connection'
 import { createPowerShellOutput } from './powershell-output'
-import type { DroidInstallation, DroidSettings, OperationLevel } from '../shared/types'
+import type { BatchStage, DroidInstallation, DroidSettings, OperationLevel } from '../shared/types'
 
 const exec = promisify(execFile)
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -61,17 +62,18 @@ export async function detectDroid(customPath: string): Promise<DroidInstallation
   return null
 }
 
-function runWindows(action: 'apply' | 'normal', settings: DroidSettings, log: WriteLog) {
+function runWindows(action: 'apply' | 'normal', settings: DroidSettings, log: WriteLog, onStage?: (stage: BatchStage) => void) {
   const args = [`& ${psQuote(scriptPath())}`, '-Width', psQuote(settings.width), '-MaxWidth', psQuote(settings.maxWidth), '-ChatHeight', psQuote(settings.chatHeight), '-FontFamily', psQuote(settings.fontFamily), '-FontSize', String(settings.fontSize), '-FontWeight', String(settings.fontWeight), '-Port', String(settings.port), '-HideLocalMerge', settings.hideLocalMerge ? '1' : '0', '-HideGitDiff', settings.hideGitDiff ? '1' : '0']
   if (settings.executablePath) args.push('-ExecutablePath', psQuote(settings.executablePath))
   if (action === 'normal') args.push('-Normal')
   return new Promise<number | undefined>((resolve, reject) => {
-    const child = spawn(powershell, psCommand(args.join(' ')), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(powershell, psCommand(args.join(' ')), { windowsHide: true, env: { ...process.env, WIDE_PROGRESS_STREAM: '1' }, stdio: ['ignore', 'pipe', 'pipe'] })
     const decoder = new StringDecoder('utf8')
     let selectedPort: number | undefined
     const consume = (line: string) => {
         const portMatch = /CDP 端口 (\d+)/.exec(line)
-        if (portMatch) selectedPort = Number(portMatch[1])
+        if (portMatch) { selectedPort = Number(portMatch[1]); onStage?.('waiting') }
+        if (line.includes('正在最大化主窗口')) onStage?.('maximizing')
         if (line.trim()) log(line.replace(/\x1b\[[0-9;]*m/g, '').replace(/^\[Droid Wide\]\s*/, ''), /失败|错误/.test(line) ? 'error' : 'info')
     }
     const stdout = createPowerShellOutput(consume), stderr = createPowerShellOutput(consume)
@@ -112,6 +114,7 @@ export function injectionSource(settings: DroidSettings) {
       if (!style) { style = document.createElement('style'); style.id = 'droid-wide-ui-override'; (document.head || document.documentElement).appendChild(style); }
       style.textContent = ${JSON.stringify(css)};
       ${terminalInjection('droid', settings)};
+      ${droidSidebarInjection(settings.sidebarWidth)};
       if (window.__droidWideContentGuard) { window.__droidWideContentGuard.scan(); return true; }
       const roots = new Set(); let scheduled = false;
       const mark = root => { if (!(root instanceof Element)) return; [root, ...root.querySelectorAll('*')].forEach(el => { if (!el.hasAttribute('data-droid-wide-content') && getComputedStyle(el).maxWidth === '768px') el.setAttribute('data-droid-wide-content', ''); }); };
@@ -189,15 +192,16 @@ async function waitForDroidPages(port: number, settings: DroidSettings, log: Wri
   throw failure instanceof Error ? failure : new Error('Droid 未提供可用的调试页面。')
 }
 
-export async function runDroid(action: 'apply' | 'normal', settings: DroidSettings, log: WriteLog) {
+export async function runDroid(action: 'apply' | 'normal', settings: DroidSettings, log: WriteLog, onStage?: (stage: BatchStage) => void) {
   // 先确认安装路径，避免路径无效时中断已有的界面守护连接。
   const installation = await detectDroid(settings.executablePath)
   if (!installation) throw new Error('没有找到 Droid/Factory 桌面应用，请在高级设置中选择安装路径。')
   disposeDroidConnections()
   if (process.platform === 'win32') {
-    const port = await runWindows(action, settings, log)
+    const port = await runWindows(action, settings, log, onStage)
     if (action === 'apply') {
       if (!port) throw new Error('无法确认 Droid 的实际调试端口，请重新检测应用后重试。')
+      onStage?.('applying')
       await waitForDroidPages(port, settings, log)
       log('页面守护已连接，刷新或打开新窗口时会自动应用设置。')
     }

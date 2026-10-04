@@ -7,7 +7,7 @@ import { join, basename, dirname, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
 import { createServer } from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
-import { APPLICATIONS, type ApplicationSettings, type DroidInstallation, type FeatureId, type OperationLevel, type StartupMode } from '../shared/types'
+import { APPLICATIONS, INSTALLATION_CACHE_MS, MISSING_INSTALLATION_CACHE_MS, type ApplicationSettings, type BatchStage, type DroidInstallation, type FeatureId, type OperationLevel, type StartupMode } from '../shared/types'
 import { detectDroid, disposeDroidConnections, runDroid } from './droid'
 import { applicationInjection } from './injections'
 import { createPageConnection } from './page-connection'
@@ -41,11 +41,15 @@ const installationRequests = new Map<string, Promise<DroidInstallation | null>>(
 export function detectApplication(id: FeatureId, path: string, force = false): Promise<DroidInstallation | null> {
   const key = JSON.stringify([id, path])
   const cached = installationCache.get(key)
-  if (!force && cached && cached.expires > Date.now()) return Promise.resolve(cached.value)
+  if (!force && cached && cached.expires > Date.now()) {
+    // 安装更新可能移除旧路径；缓存只省去扫描，不能跳过路径有效性检查。
+    if (!cached.value) return Promise.resolve(null)
+    return stat(cached.value.path).then(info => info.isFile() ? cached.value : detectApplication(id, path, true), () => detectApplication(id, path, true))
+  }
   const pending = installationRequests.get(key)
   if (pending) return pending
   const request = resolveApplication(id, path).then(value => {
-    installationCache.set(key, { value, expires: Date.now() + 60000 })
+    installationCache.set(key, { value, expires: Date.now() + (value ? INSTALLATION_CACHE_MS : MISSING_INSTALLATION_CACHE_MS) })
     return value
   }).finally(() => installationRequests.delete(key))
   installationRequests.set(key, request)
@@ -114,14 +118,14 @@ export async function isApplicationRunning(id: FeatureId, installation: DroidIns
   throw new Error('当前操作系统暂不支持检测应用运行状态。')
 }
 
-function executeScript(command: string, name: string, report: Report): Promise<number | undefined> {
+function executeScript(command: string, name: string, report: Report, onStage?: (stage: BatchStage) => void): Promise<number | undefined> {
   return new Promise((resolve, reject) => {
-    const child = spawn(powershell, psArgs(command), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(powershell, psArgs(command), { windowsHide: true, env: { ...process.env, WIDE_PROGRESS_STREAM: '1' }, stdio: ['ignore', 'pipe', 'pipe'] })
     const output = new StringDecoder('utf8'), errorOutput = new StringDecoder('utf8')
     let selectedPort: number | undefined, failure = '', settled = false
     const consume = (line: string) => {
         const match = /CDP 端口 (\d+)/.exec(line)
-        if (match) selectedPort = Number(match[1])
+        if (match) { selectedPort = Number(match[1]); onStage?.('waiting') }
         if (/失败：/.test(line)) { failure = line.replace(/^.*?失败：/, ''); report(failure, 'error') }
     }
     const stdout = createPowerShellOutput(consume), stderr = createPowerShellOutput(consume)
@@ -155,7 +159,7 @@ async function connectPages(id: Exclude<FeatureId, 'droid'>, port: number, setti
   } while (Date.now() < deadline)
   throw error instanceof Error ? error : new Error('应用没有提供可用的调试页面。')
 }
-async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report) {
+async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report, onStage?: (stage: BatchStage) => void) {
   const capability = APPLICATIONS[id]
   const args = [`& ${quote(script(id))}`, '-Width', quote(settings.width), '-FontWeight', String(settings.fontWeight), '-Port', String(settings.port)]
   if (capability.fontFamily) args.push('-FontFamily', quote(settings.fontFamily))
@@ -169,9 +173,10 @@ async function runWindows(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'no
   if (settings.executablePath) args.push('-ExecutablePath', quote(settings.executablePath))
   if (action === 'normal') args.push('-Normal')
   else if (id === 'zcode' || id === 'qoder' || id === 'paseo') args.push('-LaunchOnly')
-  const port = await executeScript(args.join(' '), capability.name, report)
+  const port = await executeScript(args.join(' '), capability.name, report, onStage)
   if (action === 'apply') {
     if (!port) throw new Error(`${capability.name} 实际调试端口未返回，请重新启动。`)
+    onStage?.('applying')
     await connectPages(id, port, settings, report)
   }
 }
@@ -218,16 +223,17 @@ async function runUnix(id: Exclude<FeatureId, 'droid'>, action: 'apply' | 'norma
   })
   if (port) await connectPages(id, port, settings, report)
 }
-export async function runApplication(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report, startupMode: StartupMode = 'default') {
-  if (id === 'droid' && startupMode === 'default') return runDroid(action, settings, report)
+export async function runApplication(id: FeatureId, action: 'apply' | 'normal', settings: ApplicationSettings, report: Report, startupMode: StartupMode = 'default', onStage?: (stage: BatchStage) => void) {
+  if (id === 'droid' && startupMode === 'default') return runDroid(action, settings, report, onStage)
   const installation = await detectApplication(id, settings.executablePath)
   if (!installation) throw new Error(`没有找到 ${APPLICATIONS[id].name}，请在高级设置中选择安装路径。`)
   if (id !== 'droid') connection(id).dispose()
-  if (id === 'droid') await runDroid(action, settings, report)
-  else if (process.platform === 'win32') await runWindows(id, action, settings, report)
+  if (id === 'droid') await runDroid(action, settings, report, onStage)
+  else if (process.platform === 'win32') await runWindows(id, action, settings, report, onStage)
   else if (process.platform === 'darwin' || process.platform === 'linux') await runUnix(id, action, settings, installation, report)
   else throw new Error('当前操作系统暂不支持启动。')
   if (startupMode === 'maximized' && process.platform === 'win32') {
+    onStage?.('maximizing')
     const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'maximize-window.ps1')
     try {
       await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)}`), { windowsHide: true, timeout: 55000, maxBuffer: 1024 * 1024 })
@@ -235,17 +241,32 @@ export async function runApplication(id: FeatureId, action: 'apply' | 'normal', 
   }
 }
 
-export async function quitApplication(id: FeatureId, path: string) {
+export async function quitApplication(id: FeatureId, path: string, detectedInstallation?: DroidInstallation) {
   // 退出前重新识别安装，兼容运行期间切换到新版本的桌面应用。
-  const installation = await detectApplication(id, path, true)
+  const installation = detectedInstallation ?? await detectApplication(id, path, true)
   if (!installation) throw new Error(`没有找到 ${APPLICATIONS[id].name}，请先选择正确的安装路径。`)
   if (id === 'droid') disposeDroidConnections()
   else connections.get(id)?.dispose()
   if (process.platform === 'win32') {
     const helper = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'quit-application.ps1')
+    const timeout = 45000
     try {
-      await exec(powershell, psArgs(`& ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)} -ProtectedProcessId ${process.pid}`), { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 })
-    } catch { throw new Error(`未能完整退出 ${APPLICATIONS[id].name}，请检查是否存在无权限关闭的进程。`) }
+      // 用 JSON 传回原始异常，避免 PowerShell 的 CLIXML 和定位信息遮蔽实际原因。
+      const command = `try { & ${quote(helper)} -ExecutablePath ${quote(installation.path)} -ApplicationId ${quote(id)} -ProtectedProcessId ${process.pid} } catch { [Console]::Error.WriteLine('WIDE_QUIT_ERROR:' + (ConvertTo-Json -InputObject $_.Exception.Message -Compress)); exit 1 }`
+      await exec(powershell, psArgs(command), { windowsHide: true, timeout, maxBuffer: 1024 * 1024 })
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string; stderr?: string }
+      const name = APPLICATIONS[id].name
+      if (failure.killed && failure.signal) throw new Error(`退出 ${name} 超过 ${timeout / 1000} 秒，请检查应用是否仍在运行后重试。`)
+      if (failure.code === 'ENOENT') throw new Error('系统 PowerShell 不可用。')
+      const match = /(?:^|\r?\n)WIDE_QUIT_ERROR:([^\r\n]+)/.exec(failure.stderr || '')
+      let detail = ''
+      if (match) {
+        try { const message: unknown = JSON.parse(match[1]); if (typeof message === 'string') detail = message }
+        catch { /* 无法解析时保留原始执行错误。 */ }
+      }
+      throw new Error(`未能完整退出 ${name}：${detail || failure.message || String(error)}`)
+    }
   } else if (process.platform === 'darwin' || process.platform === 'linux') await quitUnix(installation)
   else throw new Error('当前操作系统暂不支持退出应用。')
 }

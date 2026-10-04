@@ -72,6 +72,7 @@ function Stop-RunTranscript {
 }
 
 function Write-Step([string]$Message) {
+    if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[WorkBuddy Wide] $Message"); return }
     Write-Host "[WorkBuddy Wide] $Message" -ForegroundColor Cyan
 }
 

@@ -23,6 +23,7 @@
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Message) {
+    if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[Codex Wide] $Message"); return }
     Write-Host "[Codex Wide] $Message" -ForegroundColor Cyan
 }
 

@@ -3,6 +3,7 @@ import templates from './injection-templates.json'
 import type { ApplicationSettings, FeatureId } from '../shared/types'
 import { dshInjection } from './dsh-injection'
 import { workbuddySidebarInjection } from './workbuddy-sidebar-injection'
+import { sidebarInjection } from './sidebar-injection'
 
 // 模板沿用原脚本的选择器和页面守护，跨平台启动共用相同规则。
 export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: ApplicationSettings) {
@@ -26,6 +27,9 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
     return values[key]
   })
   const source = template.source.replaceAll('$cssJson', JSON.stringify(css)).replaceAll('$PreventSummary', settings.preventSummary ? '1' : '0')
-  if (id === 'zcode' || id === 'qoder') return `${source.trim().replace(/;$/, '')} && ${terminalInjection(id, settings)}`
-  return id === 'workbuddy' ? `${source}\n${workbuddySidebarInjection(settings.sidebarWidth)}` : source
+  const sidebar = id === 'workbuddy' ? workbuddySidebarInjection(settings.sidebarWidth) : sidebarInjection(id, settings.sidebarWidth)
+  const layoutSource = source.trim().replace(/;$/, '')
+  return id === 'zcode' || id === 'qoder'
+    ? `${layoutSource} && ${terminalInjection(id, settings)} && ${sidebar}`
+    : `${layoutSource} && ${sidebar}`
 }

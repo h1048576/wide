@@ -4,14 +4,14 @@ import HarnessSectionHeading, { HarnessExpandToggle } from './HarnessSectionHead
 import { ModelDialog } from './ModelDialog'
 import McpEditorDialog, { type McpEditor } from './McpDialog'
 import { displayHarnessPath } from './harnessPath'
-import type { McpDocument, McpFields, McpHarnessId, McpServer, McpSource, McpTarget, McpsInventory } from '../../shared/types'
+import type { McpDocument, McpFields, McpHarnessId, McpServer, McpSource, McpTarget } from '../../shared/types'
+import { mcpsResource } from './harnessResources'
+import { useInventoryResource } from './inventoryResource'
 
 const ids: McpHarnessId[] = ['claude', 'codex']
 const paths: Record<McpHarnessId, string> = { claude: '~/.claude.json', codex: '~/.codex/config.toml' }
 const messageOf = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error)
 export default function McpsSection({ defaultCollapsed, disabled, onBusyChange }: { defaultCollapsed: boolean; disabled: boolean; onBusyChange: (busy: boolean) => void }) {
-  const [inventory, setInventory] = useState<McpsInventory>({ sources: [] })
-  const [loading, setLoading] = useState(!!window.wide)
   const [error, setError] = useState('')
   const [sectionOpen, setSectionOpen] = useState(!defaultCollapsed)
   const [expanded, setExpanded] = useState<Partial<Record<McpHarnessId, boolean>>>({})
@@ -20,33 +20,24 @@ export default function McpsSection({ defaultCollapsed, disabled, onBusyChange }
   const [operation, setOperation] = useState('')
   const mounted = useRef(true)
   const lock = useRef(false)
-  const disabledRef = useRef(disabled)
-  disabledRef.current = disabled
   const desktop = !!window.wide
-  const locked = disabled || loading || !!operation
   const dialogOpen = !!editor || !!preview
-  const dialogRef = useRef(dialogOpen)
-  dialogRef.current = dialogOpen
+  const resource = useInventoryResource(mcpsResource, sectionOpen, disabled || !!operation || dialogOpen)
+  const inventory = resource.data, loading = resource.loading
+  const locked = disabled || loading || !!operation
   const allExpanded = sectionOpen && ids.every(id => expanded[id])
-  async function refresh(id?: McpHarnessId) {
+  async function refresh(id?: McpHarnessId, invalidate = true) {
     if (!window.wide) return
-    try {
-      if (id) {
-        const source = await window.wide.mcpsRefresh(id)
-        if (mounted.current) setInventory(current => ({ sources: ids.map(harness => harness === id ? source : current.sources.find(item => item.harness === harness)!).filter(Boolean) }))
-      } else {
-        const next = await window.wide.mcpsInventory()
-        if (mounted.current) setInventory(next)
-      }
-      if (mounted.current) setError('')
-    } catch (error) { if (mounted.current) setError(messageOf(error)) }
-    finally { if (mounted.current) setLoading(false) }
+    if (invalidate) mcpsResource.invalidate()
+    await mcpsResource.refresh(true, id ? async current => {
+      const source = await window.wide!.mcpsRefresh(id)
+      return { sources: ids.map(harness => harness === id ? source : current.sources.find(item => item.harness === harness)!).filter(Boolean) }
+    } : undefined)
+    if (mounted.current) setError('')
   }
   useEffect(() => {
-    mounted.current = true; void refresh()
-    const focus = () => { if (!lock.current && !disabledRef.current && !dialogRef.current) void refresh() }
-    window.addEventListener('focus', focus)
-    return () => { mounted.current = false; window.removeEventListener('focus', focus) }
+    mounted.current = true
+    return () => { mounted.current = false }
   }, [])
   function expandAll(open: boolean) { setExpanded(Object.fromEntries(ids.map(id => [id, open]))); if (open) setSectionOpen(true) }
   const focusBack = () => document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -78,29 +69,29 @@ export default function McpsSection({ defaultCollapsed, disabled, onBusyChange }
     if (!editor || locked || lock.current) throw new Error('操作正在执行，请稍后再试')
     lock.current = true; setOperation('save'); onBusyChange(true)
     let saved = false
-    try { await window.wide!.mcpSave({ harness: editor.source.harness, target: editor.target, copyFrom: editor.copyFrom, fields }); await refresh(); saved = true }
+    try { await window.wide!.mcpSave({ harness: editor.source.harness, target: editor.target, copyFrom: editor.copyFrom, fields }); await refresh(editor.source.harness); saved = true }
     finally { lock.current = false; if (mounted.current) { setOperation(''); if (saved) setEditor(null) } onBusyChange(false) }
   }
   async function remove(source: McpSource, item: McpServer) {
     if (locked || lock.current || dialogOpen) return
     lock.current = true; setOperation(`delete:${source.harness}:${item.name}`); setError(''); onBusyChange(true)
-    try { await window.wide!.mcpDelete(targetOf(source, item)); await refresh() }
+    try { await window.wide!.mcpDelete(targetOf(source, item)); await refresh(source.harness) }
     catch (error) { if (mounted.current) setError(messageOf(error)) }
     finally { lock.current = false; if (mounted.current) setOperation(''); onBusyChange(false) }
   }
   return <div className="harness-mcps">
     <HarnessSectionHeading title="MCPs" expanded={sectionOpen} contentId="harness-mcps-content" onToggle={() => setSectionOpen(current => !current)} disabled={dialogOpen}>
       <HarnessExpandToggle title="MCPs" expanded={allExpanded} disabled={dialogOpen} onToggle={() => expandAll(!allExpanded)} />
-      <button className="icon-button" aria-label="刷新 MCPs" title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { setLoading(true); void refresh() }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+      <button className="icon-button" aria-label="刷新 MCPs" title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { void refresh(undefined, false) }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
     </HarnessSectionHeading>
-    {error && <p className="field-error model-error" role="alert">{error}</p>}
+    {(error || resource.error) && <p className="field-error model-error" role="alert">{error || resource.error}</p>}
     <div id="harness-mcps-content" hidden={!sectionOpen}>
       {ids.map(id => {
         const source = inventory.sources.find(item => item.harness === id)
         const servers = source?.servers ?? [], path = displayHarnessPath(source?.path ?? paths[id]), open = !!expanded[id]
         return <section key={id} className="settings-group harness-mcps-group" aria-label={`${id} mcps`}><div className="settings-list">
           <div className="setting-row harness-skills-header"><div className="harness-folder-label"><button className="harness-disclosure" aria-label={`${id}，${servers.length} 个 MCP`} aria-expanded={open} aria-controls={`mcps-${id}`} onClick={() => setExpanded(current => ({ ...current, [id]: !current[id] }))}><ChevronDown size={16} className={open ? 'open' : ''} /><span>{id}</span><span className="harness-count">{loading ? '…' : servers.length}</span></button><p className="harness-path" title={path}>{path}</p></div>
-            <div className="harness-actions"><button className="button secondary harness-action" aria-label={`${id} 查看 MCP 配置`} disabled={!desktop || locked || !source?.editable || dialogOpen} onClick={() => { if (source) void view(source) }}><Eye size={14} />查看</button><button className="button secondary harness-action" aria-label={`${id} 新增 MCP`} disabled={!desktop || locked || !source?.editable || dialogOpen} onClick={() => { if (source) void edit(source) }}><Plus size={14} />新增</button><button className="icon-button" aria-label={`${id} 刷新 MCPs`} title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { setLoading(true); void refresh(id) }}><RefreshCw size={15} /></button></div>
+            <div className="harness-actions"><button className="button secondary harness-action" aria-label={`${id} 查看 MCP 配置`} disabled={!desktop || locked || !source?.editable || dialogOpen} onClick={() => { if (source) void view(source) }}><Eye size={14} />查看</button><button className="button secondary harness-action" aria-label={`${id} 新增 MCP`} disabled={!desktop || locked || !source?.editable || dialogOpen} onClick={() => { if (source) void edit(source) }}><Plus size={14} />新增</button><button className="icon-button" aria-label={`${id} 刷新 MCPs`} title="刷新" disabled={!desktop || locked || dialogOpen} onClick={() => { void refresh(id, false) }}><RefreshCw size={15} /></button></div>
           </div>
           {open && <div id={`mcps-${id}`} className="harness-skill-list">{servers.length ? servers.map(item => <div key={item.name} className="setting-row harness-skill-row"><div className="harness-skill-name"><Plug size={15} /><div><span>{item.name}</span><small>{item.transport.toUpperCase()}{item.description ? ` · ${item.description}` : ''}</small></div></div><div className="harness-actions"><button className="button secondary harness-action" disabled={locked || dialogOpen} aria-label={`${id} ${item.name} 修改 MCP`} onClick={() => { if (source) void edit(source, item) }}><Pencil size={14} />修改</button><button className="button secondary harness-action" disabled={locked || dialogOpen} aria-label={`${id} ${item.name} 复制 MCP`} onClick={() => { if (source) void edit(source, item, true) }}><Copy size={14} />复制</button><button className="button secondary harness-action harness-delete" disabled={locked || dialogOpen} aria-label={`${id} ${item.name} 删除 MCP`} onClick={() => { if (source) void remove(source, item) }}><Trash2 size={14} />删除</button></div></div>) : <p className="harness-empty">{loading ? '正在读取 MCP…' : '暂无 MCP'}</p>}</div>}
         </div>{source?.error && <p className="field-error model-error" role="alert">{source.error}</p>}</section>

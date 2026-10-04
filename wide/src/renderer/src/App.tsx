@@ -1,6 +1,6 @@
 import { Activity, lazy, Suspense, useEffect, useRef, useState, type ComponentType, type InputHTMLAttributes, type PointerEvent, type ReactNode } from 'react'
 import { Check, ChevronDown, ChevronRight, CircleAlert, FolderOpen, GripVertical, LogOut, Maximize2, Minus, Monitor, PanelLeft, Play, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, X } from 'lucide-react'
-import { DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
+import { BATCH_STAGE_LABELS, DEFAULT_APPEARANCE, DEFAULT_APPLICATIONS, DEFAULT_HARNESS_SETTINGS, APPLICATIONS, DEFAULT_MENU_ORDER, INSTALLATION_CACHE_MS, MISSING_INSTALLATION_CACHE_MS, SYSTEM_FONT, appearanceErrors, normalizeMenuOrder, settingsErrors, type ApplicationPreferences, type AppearanceMode, type AppearanceSettings, type HarnessSettings, type BatchAction, type BatchProgress, type DroidInstallation, type DroidSettings, type FeatureId, type Theme, type StartupMode } from '../../shared/types'
 import codexIcon from './assets/icons/codex.png'
 import droidIcon from './assets/icons/droid.svg'
 import dshIcon from './assets/icons/dsh.svg'
@@ -17,8 +17,9 @@ type MenuId = FeatureId | 'settings' | 'start' | 'harness'
 type BusyOperation = { id: FeatureId; action: 'apply' | 'normal' | 'exit' } | { id: 'all'; action: BatchAction; scope: 'all' | 'selected' } | { id: 'harness'; action: 'manage' }
 type SaveDomain = FeatureId | 'appearance' | 'harness' | 'theme' | 'menuOrder' | 'startupMode' | 'openAtLogin'
 type RestoreConfirmation = { action: 'presets' | 'normal'; target: FeatureId | 'settings'; returnFocus: HTMLElement | null }
-type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean }
+type Detection = { installation: DroidInstallation | null; error: string; checking: boolean; checked: boolean; checkedAt: number }
 const detectionKey = (id: FeatureId, settings: DroidSettings) => JSON.stringify([id, settings.executablePath])
+const detectionFresh = (result?: Detection) => !!result?.checked && Date.now() - result.checkedAt < (result.error ? 5000 : result.installation ? INSTALLATION_CACHE_MS : MISSING_INSTALLATION_CACHE_MS)
 type AppIconProps = { size?: number; strokeWidth?: number }
 function applicationIcon(id: FeatureId, src: string): ComponentType<AppIconProps> {
   return function ApplicationIcon({ size = 20 }) {
@@ -90,7 +91,10 @@ export default function App() {
   const currentHarnessSettings = useRef(harnessSettings)
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState<BusyOperation | null>(null)
+  const busyRef = useRef(busy)
+  busyRef.current = busy
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null)
+  const batchRunning = useRef(false)
   const [batchError, setBatchError] = useState('')
   const [selectedApplications, setSelectedApplications] = useState<FeatureId[]>([])
   const [advanced, setAdvanced] = useState(false)
@@ -104,7 +108,7 @@ export default function App() {
   const missingInstallation = detection?.checked && !installation
   const currentOperation = busy?.id === applicationId ? busy.action : null
   const [platform, setPlatform] = useState(navigator.userAgent.includes('Mac') ? 'darwin' : navigator.userAgent.includes('Linux') ? 'linux' : 'win32')
-  const [version, setVersion] = useState('0.2.63')
+  const [version, setVersion] = useState('0.2.69')
   const [windowMaximized, setWindowMaximized] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
   const [restoreConfirmation, setRestoreConfirmation] = useState<RestoreConfirmation | null>(null)
@@ -157,7 +161,7 @@ export default function App() {
       if (document.getElementById('root')?.inert) return
       if (event.key === 'Escape' && menuDrag.current) { event.preventDefault(); endMenuDrag(); return }
       if (!(event.ctrlKey || event.metaKey)) return
-      if (/^[1-6]$/.test(event.key)) { event.preventDefault(); setActive(currentMenuOrder.current[Number(event.key) - 1]) }
+      if (/^[1-7]$/.test(event.key)) { event.preventDefault(); setActive(currentMenuOrder.current[Number(event.key) - 1]) }
       if (event.key === ',') { event.preventDefault(); setActive('settings') }
     }
     window.addEventListener('keydown', onKey)
@@ -186,14 +190,16 @@ export default function App() {
   }, [])
   useEffect(() => {
     setAdvanced(false)
-    if (active === 'settings' || active === 'start' || active === 'harness' || !ready || !desktop || bootError || errors.executablePath) return
-    if (detectionCache.current.has(detectionKey(applicationId, settings))) return
-    // 路径输入保留防抖，单纯切换应用立即读取各自缓存。
-    const timer = setTimeout(() => { void detect(settings.executablePath, false) }, settings.executablePath ? 400 : 0)
-    return () => clearTimeout(timer)
+    if (!isApplication || !ready || !desktop || bootError || errors.executablePath) return
+    // 切页展示缓存，过期数据和重新聚焦时后台校验；路径输入仍保留防抖。
+    const timer = detectionFresh(detectionCache.current.get(detectionKey(applicationId, settings))) ? undefined
+      : setTimeout(() => { void detect(settings.executablePath, false) }, settings.executablePath ? 400 : 0)
+    const focus = () => { if (!busyRef.current && !document.hidden) void detect(settings.executablePath, false) }
+    window.addEventListener('focus', focus)
+    return () => { clearTimeout(timer); window.removeEventListener('focus', focus) }
   }, [ready, applicationId, active, settings.executablePath, bootError])
   useEffect(() => {
-    if (!ready || !desktop || bootError) return
+    if (!ready || !desktop || bootError || busy) return
     let cancelled = false
     const queue = currentMenuOrder.current.filter(id => id !== activeRef.current)
     const preload = async () => {
@@ -203,10 +209,10 @@ export default function App() {
         if (!settingsErrors(value).executablePath) await requestDetection(id, value, false)
       }
     }
-    // 三个后台检测任务，与当前页面的检测并行；复用同一应用的在途请求。
-    void preload(); void preload(); void preload()
-    return () => { cancelled = true }
-  }, [ready, desktop, bootError])
+    // 首屏绘制后再预检，给当前页面的安装检测优先启动的机会。
+    const timer = setTimeout(() => { void preload(); void preload(); void preload() }, 800)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [ready, desktop, bootError, !!busy])
   useEffect(() => {
     if (!notice || notice.error) return
     const timer = setTimeout(() => setNotice(null), 3500)
@@ -327,17 +333,17 @@ export default function App() {
     const key = detectionKey(id, value)
     const existing = detectionRequests.current.get(key)
     if (existing) return existing
-    if (!force && detectionCache.current.has(key)) return Promise.resolve()
+    if (!force && detectionFresh(detectionCache.current.get(key))) return Promise.resolve()
     const publish = (result: Detection) => {
       detectionCache.current.set(key, result)
       // 后台预检只更新缓存，当前应用的检测结果才触发界面渲染。
       if (activeRef.current === id) setDetectionRevision(current => current + 1)
     }
-    publish({ installation: detectionCache.current.get(key)?.installation ?? null, error: '', checking: true, checked: false })
+    publish({ installation: detectionCache.current.get(key)?.installation ?? null, error: '', checking: true, checked: false, checkedAt: 0 })
     const request = window.wide.detect(id, value.executablePath, force).then(installation => {
-      publish({ installation, error: '', checking: false, checked: true })
+      publish({ installation, error: '', checking: false, checked: true, checkedAt: Date.now() })
     }).catch(error => {
-      publish({ installation: null, error: messageOf(error), checking: false, checked: true })
+      publish({ installation: null, error: messageOf(error), checking: false, checked: true, checkedAt: Date.now() })
     }).finally(() => detectionRequests.current.delete(key))
     detectionRequests.current.set(key, request)
     return request
@@ -363,18 +369,19 @@ export default function App() {
     finally { setBusy(null) }
   }
   async function runAll(action: BatchAction, ids?: FeatureId[]) {
-    if (!window.wide || disabled) return
+    if (!window.wide || disabled || batchRunning.current) return
     const order = currentMenuOrder.current.filter(id => !ids || ids.includes(id))
     if (!order.length) return
+    batchRunning.current = true
     setBusy({ id: 'all', action, scope: ids ? 'selected' : 'all' }); setNotice(null); setBatchError('')
-    setBatchProgress({ action, currentIds: [], completed: 0, total: order.length, results: [] })
+    setBatchProgress({ action, applicationIds: order, stages: Object.fromEntries(order.map(id => [id, 'queued'])), currentIds: [], completed: 0, total: order.length, results: [] })
     try {
       await Promise.all([...pending.current])
       if (action !== 'exit' && Object.values(saveErrorsRef.current).length) throw new Error('自动保存失败，请修正设置后再执行全局操作。')
       const result = await window.wide.runAll(action, ids ? order : undefined)
-      setBatchProgress({ action, currentIds: [], completed: result.results.length, total: order.length, results: result.results })
+      setBatchProgress({ action, applicationIds: order, stages: {}, currentIds: [], completed: result.results.length, total: order.length, results: result.results })
     } catch (error) { setBatchProgress(null); setBatchError(messageOf(error)) }
-    finally { setBusy(null) }
+    finally { batchRunning.current = false; setBusy(null) }
   }
   function resetApplication() {
     const next = { ...defaults }
@@ -416,7 +423,7 @@ export default function App() {
     <aside className="sidebar">
       <div className={`brand-bar ${platform === 'darwin' ? 'mac-brand' : ''}`}><Maximize2 size={22} />{!collapsed && <span>wide</span>}<button className="icon-button collapse-toggle" title={collapsed ? '展开菜单' : '收起菜单'} aria-label={collapsed ? '展开菜单' : '收起菜单'} aria-expanded={!collapsed} onClick={() => setCollapsed(!collapsed)}><PanelLeft size={18} strokeWidth={1.6} aria-hidden="true" /></button></div>
       <div className="sidebar-navigation">
-      <div className="menu-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu"><button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button><button className={`feature-item ${isHarness ? 'selected' : ''}`} aria-label="Harness" aria-current={isHarness ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button></nav>
+      <div className="menu-section-label">全局</div><nav aria-label="全局菜单" className="feature-menu"><button className={`feature-item ${isGlobal ? 'selected' : ''}`} aria-label="开始" aria-current={isGlobal ? 'page' : undefined} title="开始" onClick={() => setActive('start')}><Play size={20} strokeWidth={1.6} />{!collapsed && <span>开始</span>}</button><button className={`feature-item ${active === 'harness' ? 'selected' : ''}`} aria-label="Harness" aria-current={active === 'harness' ? 'page' : undefined} title="Harness" onClick={() => setActive('harness')}><SlidersHorizontal size={20} strokeWidth={1.6} />{!collapsed && <span>Harness</span>}</button></nav>
       <div className="menu-section-label">应用</div>
       <nav ref={menuRef} aria-label="应用菜单" className={`feature-menu ${dragging ? 'menu-dragging' : ''}`}>
         {orderedFeatures.map(({ id, name, icon: Icon }) => <button key={id}
@@ -474,10 +481,12 @@ export default function App() {
           {batchError && <div className="error-banner" role="alert">{batchError}</div>}
           {batchProgress && <section className="settings-group" aria-label="全局操作结果"><h2>{busy?.id === 'all' ? '进行中' : '处理结果'}</h2>
             {busy?.id === 'all' && <div className="batch-progress" role="status" aria-live="polite"><div><RefreshCw size={15} className="spin" /><span>{batchProgress.currentIds.length ? `正在${BATCH_ACTION_LABELS[batchProgress.action]} ${batchProgress.currentIds.map(id => APPLICATIONS[id].name).join('、')}…` : batchProgress.completed === batchProgress.total ? '正在完成…' : '准备中…'}</span><span className="batch-count">{batchProgress.completed} / {batchProgress.total}</span></div><progress value={batchProgress.completed} max={batchProgress.total} aria-label="全局操作进度" /></div>}
-            {batchProgress.results.length > 0 && <div className="settings-list batch-results">{batchProgress.results.map(result => {
-              const ResultIcon = FEATURES.find(item => item.id === result.id)!.icon
-              return <div className={`batch-result setting-row ${result.status}`} key={result.id}><div className="batch-app-name"><ResultIcon size={20} /><span>{APPLICATIONS[result.id].name}</span></div><span className="batch-result-message">{result.message}</span></div>
-            })}</div>}
+            <div className="settings-list batch-results">{batchProgress.applicationIds.map(id => {
+              const result = batchProgress.results.find(item => item.id === id)
+              const ResultIcon = FEATURES.find(item => item.id === id)!.icon
+              const running = batchProgress.currentIds.includes(id)
+              return <div className={`batch-result setting-row ${result?.status ?? (running ? 'running' : 'queued')}`} key={id}><div className="batch-app-name"><ResultIcon size={20} /><span>{APPLICATIONS[id].name}</span></div><span className="batch-result-message">{running && <RefreshCw size={13} className="spin" />}{result?.message ?? BATCH_STAGE_LABELS[batchProgress.stages[id] ?? 'queued']}</span></div>
+            })}</div>
           </section>}
         </div></Activity>
         {isGlobal ? null : isHarness ? <Suspense fallback={<p className="operation-note" role="status">正在加载 Harness…</p>}><HarnessPage settings={harnessSettings} disabled={disabled} onBusyChange={value => setBusy(value ? { id: 'harness', action: 'manage' } : null)} onNotice={(text, error) => setNotice({ text, error })} /></Suspense> : isApplication ? <div key={applicationId} className={`settings-page application-settings-${applicationId}`}>

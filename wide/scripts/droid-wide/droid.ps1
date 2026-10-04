@@ -108,6 +108,7 @@ function Stop-RunTranscript {
 }
 
 function Write-Step([string]$Message) {
+    if ($env:WIDE_PROGRESS_STREAM -eq '1') { [Console]::WriteLine("[Droid Wide] $Message"); return }
     Write-Host "[Droid Wide] $Message" -ForegroundColor Cyan
 }
 

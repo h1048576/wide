@@ -68,7 +68,7 @@ export class ModelsManager {
     return { document, providers: plugin.config.providers as ObjectValue, index: indices[0] }
   }
 
-  private async sources(): Promise<SourceConfig[]> {
+  private async sources(read = (path: string) => this.read(path), parseYaml = (text: string) => this.yaml(text)): Promise<SourceConfig[]> {
     const json = await Promise.all([this.jsonSource('claude'), this.jsonSource('droid')])
     const extra: SourceConfig[] = [
       { id: 'pi', harness: 'pi', path: join(this.home, '.pi', 'agent', 'models.json'), label: 'proxy', provider: 'proxy' },
@@ -76,7 +76,7 @@ export class ModelsManager {
     ]
     const path = this.dshPath('desktop')
     try {
-      const { providers } = this.yaml((await this.read(path)).text)
+      const { providers } = parseYaml((await read(path)).text)
       const names = Object.keys(providers).filter(key => object(providers[key]))
       if (!names.length) throw new Error('尚未配置模型提供商')
       return [...json, ...names.map(provider => ({ id: `dsh:${provider}`, harness: 'dsh' as const, path, label: provider, provider })), ...extra]
@@ -97,9 +97,9 @@ export class ModelsManager {
     return this.parseFile(source, file)
   }
 
-  private parseFile(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['read']>>) {
+  private parseFile(source: SourceConfig, file: Awaited<ReturnType<ModelsManager['read']>>, parseYaml = (text: string) => this.yaml(text)) {
     if (source.harness === 'dsh') {
-      const yaml = this.yaml(file.text)
+      const yaml = parseYaml(file.text)
       if (!source.provider || !object(yaml.providers[source.provider])) throw new Error('尚未配置模型提供商')
       const provider = yaml.providers[source.provider]
       if (provider.modelOverrides !== undefined) throw new Error('此提供商使用 modelOverrides，请先改为 models 后再管理自定义模型')
@@ -125,11 +125,23 @@ export class ModelsManager {
   }
 
   async inventory(): Promise<ModelsInventory> {
-    const sources = await this.sources()
+    const files = new Map<string, Promise<Awaited<ReturnType<ModelsManager['read']>>>>()
+    const documents = new Map<string, ReturnType<ModelsManager['yaml']>>()
+    const read = (path: string, allowMissing = false) => {
+      let file = files.get(path)
+      if (!file) { file = this.read(path, allowMissing); files.set(path, file) }
+      return file
+    }
+    const parseYaml = (text: string) => {
+      let document = documents.get(text)
+      if (!document) { document = this.yaml(text); documents.set(text, document) }
+      return document
+    }
+    const sources = await this.sources(read, parseYaml)
     return { sources: await Promise.all(sources.map(async source => {
       try {
-        const { entries, baseUrl } = await this.load(source)
-        if (source.harness === 'dsh') await this.load({ ...source, path: this.dshPath('web') })
+        const { entries, baseUrl } = this.parseFile(source, await read(source.path, source.harness === 'claude' || source.harness === 'droid'), parseYaml)
+        if (source.harness === 'dsh') this.parseFile(source, await read(this.dshPath('web')), parseYaml)
         return { ...source, baseUrl, editable: true, models: entries.map((item, index) => ({ index, model: modelId(source.harness, item), name: String(item.label ?? item.displayName ?? item.name ?? modelId(source.harness, item) ?? '未命名模型'), revision: entryRevision(item) })) }
       } catch (error) {
         return { ...source, editable: false, models: [], error: missing(error) ? '未找到配置文件' : error instanceof Error ? error.message : '读取模型失败' }

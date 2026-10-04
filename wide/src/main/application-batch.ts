@@ -1,5 +1,5 @@
 import { detectApplication, isApplicationRunning, quitApplication, runApplication } from './applications'
-import { normalizeMenuOrder, type BatchAction, type BatchApplicationResult, type BatchProgress, type BatchResult, type FeatureId, type OperationLevel, type Preferences } from '../shared/types'
+import { normalizeMenuOrder, type BatchAction, type BatchApplicationResult, type BatchProgress, type BatchResult, type BatchStage, type FeatureId, type OperationLevel, type Preferences } from '../shared/types'
 
 let batchRevision = 0
 const BATCH_CONCURRENCY = 5
@@ -10,12 +10,13 @@ export async function runAllApplications(action: BatchAction, preferences: Prefe
   const order = normalizeMenuOrder(snapshot.menuOrder).filter(id => !ids || ids.includes(id))
   const resultsById = new Map<FeatureId, BatchApplicationResult>()
   const activeIds = new Set<FeatureId>()
+  const stages: Partial<Record<FeatureId, BatchStage>> = Object.fromEntries(order.map(id => [id, 'queued']))
   const orderedResults = () => order.flatMap(id => {
     const result = resultsById.get(id)
     return result ? [{ ...result }] : []
   })
   const publish = () => {
-    onProgress({ action, currentIds: order.filter(id => activeIds.has(id)), completed: resultsById.size, total: order.length, results: orderedResults() })
+    onProgress({ action, applicationIds: [...order], stages: { ...stages }, currentIds: order.filter(id => activeIds.has(id)), completed: resultsById.size, total: order.length, results: orderedResults() })
   }
 
   const completedText = { start: '已启动', restart: '已重启', exit: '已退出' }[action]
@@ -23,7 +24,11 @@ export async function runAllApplications(action: BatchAction, preferences: Prefe
   // 按菜单顺序分配任务；不同应用并发，同一应用的退出、启动仍顺序执行。
   const processApplication = async (id: FeatureId) => {
     activeIds.add(id)
-    publish()
+    const stage = (value: BatchStage) => {
+      if (stages[id] === value) return
+      stages[id] = value; publish()
+    }
+    stage('detecting')
     const settings = snapshot.applications[id]
     let failureDetail = ''
     let operationRunning = true
@@ -37,19 +42,31 @@ export async function runAllApplications(action: BatchAction, preferences: Prefe
       }
     }
     try {
-      const installation = await detectApplication(id, settings.executablePath, true)
+      // 启动复用短期安装缓存；运行状态仍实时查询，重启和退出仍重新识别安装。
+      const installation = await detectApplication(id, settings.executablePath, action !== 'start')
       if (!installation) {
         resultsById.set(id, { id, status: 'skipped', skipReason: 'not-installed', message: '未安装，已跳过' })
-      } else if (action === 'start' && await isApplicationRunning(id, installation)) {
-        resultsById.set(id, { id, status: 'skipped', skipReason: 'already-running', message: '已运行，已跳过' })
       } else {
-        if (action === 'restart' || action === 'exit') await quitApplication(id, settings.executablePath)
-        if (action !== 'exit') await runApplication(id, 'apply', settings, report, snapshot.startupMode)
+        if (action === 'start') {
+          stage('checking')
+          if (await isApplicationRunning(id, installation)) {
+            resultsById.set(id, { id, status: 'skipped', skipReason: 'already-running', message: '已运行，已跳过' })
+            return
+          }
+        }
+        if (action === 'restart' || action === 'exit') {
+          stage('stopping')
+          await quitApplication(id, settings.executablePath, installation)
+        }
+        if (action !== 'exit') {
+          stage('starting')
+          await runApplication(id, 'apply', settings, report, snapshot.startupMode, stage)
+        }
         resultsById.set(id, { id, status: 'success', message: completedText })
       }
     } catch (error) {
       resultsById.set(id, { id, status: 'error', message: failureDetail || (error instanceof Error ? error.message : String(error)) })
-    } finally { operationRunning = false; activeIds.delete(id); publish() }
+    } finally { operationRunning = false; activeIds.delete(id); delete stages[id]; publish() }
   }
   const queue = [...order]
   await Promise.all(Array.from({ length: Math.min(BATCH_CONCURRENCY, queue.length) }, async () => {
