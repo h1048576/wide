@@ -396,7 +396,7 @@ try {
     )
     Write-Step "正在启动 WorkBuddy（CDP 端口 $Port）…"
     Start-WorkBuddy $application $debugArguments
-    $targets = @(Wait-Cdp $Port 20)
+    $targets = @(Wait-Cdp $Port 60)
     if ($targets.Count -eq 0) {
         throw "WorkBuddy 未在 http://127.0.0.1:$Port 提供主页面 CDP target。请确认旧实例已退出后重试。"
     }

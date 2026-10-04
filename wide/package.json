@@ -1,6 +1,6 @@
 {
   "name": "wide",
-  "version": "0.2.63",
+  "version": "0.2.64",
   "description": "wide",
   "private": true,
   "main": "out/main/index.js",

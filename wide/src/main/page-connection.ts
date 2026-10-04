@@ -77,8 +77,14 @@ export function createPageConnection(name: string, styleId: string, acceptsPage:
     try {
       await cdp.connect()
       await cdp.command('Page.enable', {})
+      const ready = await cdp.command('Runtime.evaluate', { expression: '!!document.documentElement && document.readyState !== "loading"', returnByValue: true })
+      if (ready.exceptionDetails || ready.result?.value !== true) throw new Error('主页面尚未完成加载。')
       const result = await cdp.command('Runtime.evaluate', { expression: source, returnByValue: true })
-      if (result.exceptionDetails || result.result?.value !== true) throw new Error('应用界面注入失败，当前版本的页面结构可能已变更。')
+      if (result.exceptionDetails) {
+        const detail = result.exceptionDetails.exception?.description || result.exceptionDetails.text || '未知脚本错误'
+        throw new Error(`应用界面注入失败：${detail}`)
+      }
+      if (result.result?.value !== true) throw new Error('应用界面尚未就绪，设置未生效。')
       await cdp.command('Page.addScriptToEvaluateOnNewDocument', { source })
       cdp.on('Page.domContentEventFired', () => {
         if (generation !== watchGeneration) return
@@ -104,11 +110,16 @@ export function createPageConnection(name: string, styleId: string, acceptsPage:
       const targets = await readTargets(port)
       if (!targets.length) throw new Error('应用没有可用的调试页面')
       const results = await Promise.allSettled(targets.map(target => attachTarget(target, source, log, generation)))
-      if (!results.some(result => result.status === 'fulfilled')) throw new Error(`${name} 主页面仍在加载，暂时无法应用设置。`)
+      if (!results.some(result => result.status === 'fulfilled')) {
+        const failure = results.find(result => result.status === 'rejected')
+        const detail = failure?.status === 'rejected' ? String(failure.reason instanceof Error ? failure.reason.message : failure.reason) : '主页面尚未就绪'
+        throw new Error(`${name} 应用设置失败：${detail}`)
+      }
     } catch (error) { dispose(); throw error }
     let checking = false
     let unavailable = 0
     const reported = new Set<string>()
+    const failingSince = new Map<string, number>()
     watchTimer = setInterval(async () => {
       if (checking || generation !== watchGeneration) return
       checking = true
@@ -117,6 +128,7 @@ export function createPageConnection(name: string, styleId: string, acceptsPage:
         if (generation !== watchGeneration) return
         unavailable = 0
         const urls = new Set(targets.map(target => target.webSocketDebuggerUrl))
+        for (const url of failingSince.keys()) if (!urls.has(url)) { failingSince.delete(url); reported.delete(url) }
         for (const [url, cdp] of sessions) if (!urls.has(url) || !cdp.connected) { cdp.close(); sessions.delete(url) }
         for (const target of targets) {
           const existing = sessions.get(target.webSocketDebuggerUrl)
@@ -128,9 +140,13 @@ export function createPageConnection(name: string, styleId: string, acceptsPage:
             } catch { /* 页面导航结束后会在下一轮重试。 */ }
             continue
           }
-          try { await attachTarget(target, source, log, generation); reported.delete(target.webSocketDebuggerUrl) }
+          try { await attachTarget(target, source, log, generation); reported.delete(target.webSocketDebuggerUrl); failingSince.delete(target.webSocketDebuggerUrl) }
           catch (error) {
-            if (!reported.has(target.webSocketDebuggerUrl)) {
+            if (generation !== watchGeneration) return
+            const since = failingSince.get(target.webSocketDebuggerUrl) ?? Date.now()
+            failingSince.set(target.webSocketDebuggerUrl, since)
+            // 新窗口和导航期间持续重试，避免瞬时失败把整次批量启动改成失败。
+            if (Date.now() - since >= 60000 && !reported.has(target.webSocketDebuggerUrl)) {
               reported.add(target.webSocketDebuggerUrl)
               log(`${name} 新页面应用设置失败：${error instanceof Error ? error.message : String(error)}`, 'error')
             }

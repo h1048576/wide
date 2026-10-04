@@ -566,7 +566,7 @@ try {
 
     Write-Step "正在启动 $($droid.ApplicationName)（CDP 端口 $Port）…"
     Start-Droid $droid $debugArgs
-    $targets = @(Wait-Cdp $Port 12)
+    $targets = @(Wait-Cdp $Port 60)
 
     if ($targets.Count -eq 0) {
         throw "$($droid.ApplicationName) 未在 http://127.0.0.1:$Port 提供可用的 CDP page target。请关闭由其他安装目录或开发环境启动的 Droid/Factory 后重试。"

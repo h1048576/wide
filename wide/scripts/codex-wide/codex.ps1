@@ -392,7 +392,7 @@ try {
 
     Write-Step "正在启动 Codex（CDP 端口 $Port）…"
     Start-CodexPackage $codex $debugArgs
-    $targets = @(Wait-Cdp $Port 8)
+    $targets = @(Wait-Cdp $Port 30)
 
     # Some Codex/Windows combinations redirect package activation arguments through codex://.
     # In that case, retry the validated Store executable directly without modifying WindowsApps.
@@ -407,7 +407,7 @@ try {
         } catch {
             throw "Windows 阻止了直接启动 Store 包内 Codex，无法开启 CDP。原始错误：$($_.Exception.Message)"
         }
-        $targets = @(Wait-Cdp $Port 8)
+        $targets = @(Wait-Cdp $Port 45)
     }
 
     if ($targets.Count -eq 0) {

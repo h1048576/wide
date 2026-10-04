@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { createServer } from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
 import { createPageConnection } from './page-connection'
+import { createPowerShellOutput } from './powershell-output'
 import type { DroidInstallation, DroidSettings, OperationLevel } from '../shared/types'
 
 const exec = promisify(execFile)
@@ -67,28 +68,32 @@ function runWindows(action: 'apply' | 'normal', settings: DroidSettings, log: Wr
   return new Promise<number | undefined>((resolve, reject) => {
     const child = spawn(powershell, psCommand(args.join(' ')), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     const decoder = new StringDecoder('utf8')
-    let remainder = ''
     let selectedPort: number | undefined
-    const consume = (text: string) => {
-      remainder += text
-      const lines = remainder.split(/\r?\n/)
-      remainder = lines.pop() || ''
-      for (const line of lines) {
+    const consume = (line: string) => {
         const portMatch = /CDP 端口 (\d+)/.exec(line)
         if (portMatch) selectedPort = Number(portMatch[1])
         if (line.trim()) log(line.replace(/\x1b\[[0-9;]*m/g, '').replace(/^\[Droid Wide\]\s*/, ''), /失败|错误/.test(line) ? 'error' : 'info')
-      }
     }
-    child.stdout.on('data', chunk => consume(decoder.write(chunk)))
+    const stdout = createPowerShellOutput(consume), stderr = createPowerShellOutput(consume)
+    child.stdout.on('data', chunk => stdout.write(decoder.write(chunk)))
     const errorDecoder = new StringDecoder('utf8')
-    child.stderr.on('data', chunk => consume(errorDecoder.write(chunk)))
-    const timer = setTimeout(() => { child.kill(); reject(new Error('操作超过 90 秒，请检查 Droid 是否正常启动。')) }, 90000)
-    child.once('error', error => { clearTimeout(timer); reject(error) })
-    child.once('close', code => {
-      clearTimeout(timer)
-      consume(decoder.end() + errorDecoder.end() + '\n')
+    child.stderr.on('data', chunk => stderr.write(errorDecoder.write(chunk)))
+    let settled = false
+    let exitTimer: ReturnType<typeof setTimeout> | undefined
+    const finish = (code: number | null, error?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer); clearTimeout(exitTimer)
+      stdout.write(decoder.end()); stdout.end()
+      stderr.write(errorDecoder.end()); stderr.end()
+      child.stdout.destroy(); child.stderr.destroy()
+      if (error) { reject(error); return }
       code === 0 ? resolve(selectedPort) : reject(new Error(`Droid 操作失败（退出码 ${code ?? '未知'}），请检查应用路径后重试。`))
-    })
+    }
+    const timer = setTimeout(() => { child.kill(); finish(null, new Error('操作超过 120 秒，请检查 Droid 是否正常启动。')) }, 120000)
+    child.once('error', error => finish(null, error))
+    child.once('exit', code => { exitTimer = setTimeout(() => finish(code), 100) })
+    child.once('close', code => finish(code))
   })
 }
 
@@ -171,10 +176,14 @@ async function runUnix(action: 'apply' | 'normal', settings: DroidSettings, log:
     child.once('spawn', () => { child.unref(); resolve() })
   })
   if (action === 'normal') return
-  const deadline = Date.now() + 20000
+  await waitForDroidPages(port!, settings, log)
+}
+
+async function waitForDroidPages(port: number, settings: DroidSettings, log: WriteLog) {
+  const deadline = Date.now() + 60000
   let failure: unknown
   do {
-    try { await connectDroidPages(port!, settings, log); return }
+    try { await connectDroidPages(port, settings, log); return }
     catch (error) { failure = error; await sleep(500) }
   } while (Date.now() < deadline)
   throw failure instanceof Error ? failure : new Error('Droid 未提供可用的调试页面。')
@@ -189,7 +198,7 @@ export async function runDroid(action: 'apply' | 'normal', settings: DroidSettin
     const port = await runWindows(action, settings, log)
     if (action === 'apply') {
       if (!port) throw new Error('无法确认 Droid 的实际调试端口，请重新检测应用后重试。')
-      await connectDroidPages(port, settings, log)
+      await waitForDroidPages(port, settings, log)
       log('页面守护已连接，刷新或打开新窗口时会自动应用设置。')
     }
   }
