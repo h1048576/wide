@@ -20,8 +20,11 @@ export function dshInjection(settings: ApplicationSettings) {
       --dsh-windows-sidebar-width: ${sidebarWidth} !important;
       grid-template-columns: ${sidebarWidth} var(--wide-dsh-layout-tail, minmax(0px, 1fr) minmax(0px, 0px)) !important;
     }
-    [data-wide-dsh-frame]:not([data-sidebar-collapsed="true"]) > :first-child > :first-child {
+    [data-wide-dsh-frame]:not([data-sidebar-collapsed="true"]) > :first-child > [data-slot="sidebar"] > :first-child {
+      box-sizing: border-box !important;
       width: 100% !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
     }
     [data-wide-dsh-frame]:not([data-sidebar-collapsed="true"]) > [data-side="sidebar"] {
       left: ${sidebarWidth} !important;

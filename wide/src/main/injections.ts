@@ -16,6 +16,9 @@ export function applicationInjection(id: Exclude<FeatureId, 'droid'>, settings: 
   const values: Record<string, string> = {
     safeWidth: (id === 'qoder' || id === 'workbuddy') && !['auto', 'fit-content'].includes(settings.width) ? `min(100%, ${settings.width})` : settings.width,
     safeMaxWidth: id === 'qoder' || id === 'workbuddy' ? settings.maxWidth === 'none' ? '100%' : `min(100%, ${settings.maxWidth})` : settings.maxWidth,
+    // WorkBuddy 首页左右各有 24px 内边距，容器宽度需包含这部分空间。
+    homePageWidth: ['auto', 'fit-content'].includes(settings.width) ? '100%' : `min(100%, calc(${settings.width} + 48px))`,
+    homePageMaxWidth: settings.maxWidth === 'none' ? '100%' : `min(100%, calc(${settings.maxWidth} + 48px))`,
     safeFontFamily: font, cssFontFamily: font,
     ContentFontSize: String(settings.fontSize), ContentFontWeight: String(settings.fontWeight),
     hiddenUiCss: [settings.hideLocalMerge ? '[data-testid="changes-primary-cta"],[data-testid="changes-primary-cta-caret"]{display:none !important;}' : '', settings.hideGitDiff ? '[data-testid="composer-diff-stat-pill"]{display:none !important;}' : ''].join('\n'),

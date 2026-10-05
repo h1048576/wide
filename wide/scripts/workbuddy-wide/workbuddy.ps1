@@ -291,6 +291,9 @@ function Inject-WorkBuddyUi(
     # 内容宽度不能超过左右侧栏之间的实际可用空间。
     if ($safeWidth -notin @('auto', 'fit-content')) { $safeWidth = "min(100%, $safeWidth)" }
     $safeMaxWidth = if ($safeMaxWidth -eq 'none') { '100%' } else { "min(100%, $safeMaxWidth)" }
+    # 首页容器左右各有 24px 内边距，需计入外层宽度。
+    $homePageWidth = if ($ContentWidth -in @('auto', 'fit-content')) { '100%' } else { "min(100%, calc($ContentWidth + 48px))" }
+    $homePageMaxWidth = if ($ContentMaxWidth -eq 'none') { '100%' } else { "min(100%, calc($ContentMaxWidth + 48px))" }
     $safeFontFamily = $ContentFontFamily.Trim()
     $css = @"
 :root {
@@ -316,6 +319,11 @@ function Inject-WorkBuddyUi(
 
 .claw-agent-chat-pane {
     --claw-agent-chat-content-max-width: $safeMaxWidth !important;
+}
+
+.wb-home-page {
+    width: $homePageWidth !important;
+    max-width: $homePageMaxWidth !important;
 }
 
 .chat-container--welcome,
