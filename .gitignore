@@ -1,2 +1,7 @@
 *.log
 *.exe
+node_modules/
+out/
+release/
+.preview/
+*.tsbuildinfo
